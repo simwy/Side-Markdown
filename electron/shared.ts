@@ -53,4 +53,19 @@ export type MenuCommand =
   | { type: 'window:close' }
   | { type: 'window:dock'; mode: 'left' | 'center' | 'right' }
 
+export type ThemeMode = 'system' | 'dark' | 'light'
+export type Locale = 'zh-CN' | 'zh-TW' | 'en' | 'ja' | 'ko'
+
+export type DockSettings = {
+  hideDelayMs: number
+  hiddenWidthPx: number
+  shownWidthPx: number
+}
+
+export type AppSettings = {
+  theme: ThemeMode
+  locale: Locale
+  dock: DockSettings
+}
+
 

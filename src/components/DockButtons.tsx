@@ -1,29 +1,16 @@
 import React, { useEffect, useState } from 'react'
-import { IconAlignCenter, IconAlignLeft, IconAlignRight, IconPin } from './icons/TitlebarIcons'
+import { IconAlignCenter, IconAlignLeft, IconAlignRight } from './icons/TitlebarIcons'
 
 export function DockButtons() {
   const [dock, setDock] = useState<'left' | 'center' | 'right'>('center')
-  const [pinned, setPinned] = useState(false)
 
   useEffect(() => {
-    let unsub = () => {}
-    void window.electronAPI.windowIsAlwaysOnTop().then(setPinned)
-    unsub = window.electronAPI.onWindowAlwaysOnTop((v) => setPinned(v))
-    return () => unsub()
+    // 主进程可能因为用户拖动窗口而取消贴边，这里同步按钮选中态
+    return window.electronAPI.onWindowDockMode((mode) => setDock(mode))
   }, [])
 
   return (
     <div className="dock-group no-drag" aria-label="Dock group">
-      <button
-        className={`seg-btn ${pinned ? 'active' : ''}`}
-        title="钉住窗口（始终置顶）"
-        onClick={async () => {
-          const next = await window.electronAPI.windowToggleAlwaysOnTop()
-          setPinned(next)
-        }}
-      >
-        <IconPin size={14} />
-      </button>
       <button
         className={`seg-btn ${dock === 'left' ? 'active' : ''}`}
         title="居左（贴边）"

@@ -5,16 +5,17 @@ import chardet from 'chardet'
 import iconv from 'iconv-lite'
 import {
   APP_TITLE,
+  type AppSettings,
   type EncodingName,
   type MenuCommand,
   type OpenedFile,
   type SaveFileRequest,
   type SaveFileResponse
 } from './shared'
+import { getDefaultSettings, mergeSettings, readSettings, sanitizeSettings, writeSettings } from './settings'
 
 const isMac = process.platform === 'darwin'
 const DOCK_MARGIN_PX = 10
-const DOCK_PEEK_PX = 14
 const DOCK_EDGE_TRIGGER_PX = 2
 const DOCK_TICK_MS = 40
 const DOCK_STEP_PX = 26
@@ -295,14 +296,67 @@ function buildAppMenu(winGetter: () => BrowserWindow | null) {
 
 let mainWindow: BrowserWindow | null = null
 let pendingOpenFilePaths: string[] = []
+
+let appSettings: AppSettings = getDefaultSettings()
+
 let dockTimer: NodeJS.Timeout | null = null
 let dockMode: 'left' | 'right' | null = null
+let dockDisplayId: number | null = null
+let dockFullBounds: { width: number; height: number; y: number } | null = null
+let dockShown: boolean = false
+let dockPrevMinSize: { width: number; height: number } | null = null
+let dockInternalOps = 0
+let dockLastHoverAt = 0
 
 function stopDocking() {
   dockMode = null
+  dockDisplayId = null
+  dockFullBounds = null
+  dockShown = false
+  // 退出贴边后取消置顶（贴边期间临时置顶）
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(false)
+  }
+  if (mainWindow && !mainWindow.isDestroyed() && dockPrevMinSize) {
+    mainWindow.setMinimumSize(dockPrevMinSize.width, dockPrevMinSize.height)
+  }
+  dockPrevMinSize = null
   if (dockTimer) {
     clearInterval(dockTimer)
     dockTimer = null
+  }
+}
+
+function setBoundsInternal(win: BrowserWindow, bounds: Partial<Electron.Rectangle>, animate: boolean) {
+  dockInternalOps++
+  try {
+    win.setBounds(bounds as Electron.Rectangle, animate)
+  } finally {
+    // move/resize 事件会在 setBounds 之后异步触发，这里延迟释放“内部操作”标记
+    setTimeout(() => {
+      dockInternalOps = Math.max(0, dockInternalOps - 1)
+    }, 0)
+  }
+}
+
+function cancelDockingDueToUserMove(win: BrowserWindow) {
+  if (!dockMode) return
+  const mode = dockMode
+  const restoreMin = dockPrevMinSize
+  const b = win.getBounds()
+  const targetWidth = appSettings.dock.shownWidthPx
+  const targetHeight = dockFullBounds?.height ?? b.height
+
+  stopDocking()
+  win.webContents.send('window:dockMode', 'center')
+
+  if (restoreMin) win.setMinimumSize(restoreMin.width, restoreMin.height)
+
+  // 取消贴边后，保留用户拖动到的新位置，只恢复一个可用宽度（200px）
+  if (b.width < targetWidth) {
+    const rightEdge = b.x + b.width
+    const x = mode === 'right' ? rightEdge - targetWidth : b.x
+    setBoundsInternal(win, { x: Math.round(x), width: targetWidth, height: targetHeight }, true)
   }
 }
 
@@ -311,33 +365,74 @@ function getDockDisplay(win: BrowserWindow) {
   return screen.getDisplayMatching(b)
 }
 
+function getDisplayById(id: number | null) {
+  if (id == null) return null
+  return screen.getAllDisplays().find((d) => d.id === id) ?? null
+}
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
 
-function calcDockTargets(win: BrowserWindow, mode: 'left' | 'right') {
-  const display = getDockDisplay(win)
+function calcDockTargets(
+  win: BrowserWindow,
+  mode: 'left' | 'right',
+  displayOverride?: Electron.Display
+) {
+  const display = displayOverride ?? getDockDisplay(win)
   const wa = display.workArea
   const b = win.getBounds()
 
-  const width = clamp(b.width, 520, wa.width)
-  const height = clamp(b.height, 420, wa.height)
-  const y = clamp(b.y, wa.y, wa.y + wa.height - height)
+  // “缩放宽度”模式：显示宽度固定为 200px（按需求），隐藏宽度固定为 10px
+  // 显示宽度也需要被工作区裁剪（比如非常窄的屏幕/分辨率）
+  const fullWidth = clamp(appSettings.dock.shownWidthPx, 60, wa.width - DOCK_MARGIN_PX * 2)
+  const fullHeight = clamp(dockFullBounds?.height ?? b.height, 420, wa.height)
+  const y = clamp(dockFullBounds?.y ?? b.y, wa.y, wa.y + wa.height - fullHeight)
 
-  const shownX = mode === 'left' ? wa.x + DOCK_MARGIN_PX : wa.x + wa.width - width - DOCK_MARGIN_PX
-  const hiddenX =
-    mode === 'left'
-      ? wa.x + DOCK_MARGIN_PX - (width - DOCK_PEEK_PX)
-      : wa.x + wa.width - DOCK_MARGIN_PX - DOCK_PEEK_PX
+  // “缩放宽度”模式：隐藏时只保留一条边的宽度（peek），显示时恢复原宽度
+  const hiddenWidth = clamp(appSettings.dock.hiddenWidthPx, 6, 200)
+  const shownX = mode === 'left' ? wa.x + DOCK_MARGIN_PX : wa.x + wa.width - fullWidth - DOCK_MARGIN_PX
+  const hiddenX = mode === 'left' ? wa.x + DOCK_MARGIN_PX : wa.x + wa.width - hiddenWidth - DOCK_MARGIN_PX
 
-  return { workArea: wa, width, height, y, shownX, hiddenX }
+  return {
+    workArea: wa,
+    shown: { x: shownX, y, width: fullWidth, height: fullHeight },
+    hidden: { x: hiddenX, y, width: hiddenWidth, height: fullHeight }
+  }
 }
 
 function startDocking(win: BrowserWindow, mode: 'left' | 'right') {
   dockMode = mode
+  // 关键：锁定“开始贴边时的屏幕”，避免多屏下边缘/收起状态导致匹配到另一块屏幕
+  dockDisplayId = getDockDisplay(win).id
+  {
+    const b = win.getBounds()
+    dockFullBounds = { width: b.width, height: b.height, y: b.y }
+  }
+  dockShown = false
+  // 贴边模式下临时置顶，确保始终在最前端（退出贴边会恢复）
+  win.setAlwaysOnTop(true, 'floating')
+  if (!dockPrevMinSize) {
+    const [mw, mh] = win.getMinimumSize()
+    dockPrevMinSize = { width: mw, height: mh }
+  }
+  // 进入贴边模式时临时放开最小宽度限制，否则 minWidth(900) 会导致无法缩到“隐藏宽度”
+  win.setMinimumSize(appSettings.dock.hiddenWidthPx, dockPrevMinSize?.height ?? 0)
+  win.webContents.send('window:dockMode', mode)
+  dockLastHoverAt = Date.now()
 
-  const { hiddenX, width, height, y } = calcDockTargets(win, mode)
-  win.setBounds({ x: Math.round(hiddenX), y: Math.round(y), width: Math.round(width), height: Math.round(height) }, true)
+  const lockedDisplay = getDisplayById(dockDisplayId) ?? getDockDisplay(win)
+  const targets = calcDockTargets(win, mode, lockedDisplay)
+  setBoundsInternal(
+    win,
+    {
+      x: Math.round(targets.hidden.x),
+      y: Math.round(targets.hidden.y),
+      width: Math.round(targets.hidden.width),
+      height: Math.round(targets.hidden.height)
+    },
+    true
+  )
 
   if (dockTimer) return
   dockTimer = setInterval(() => {
@@ -352,7 +447,9 @@ function startDocking(win: BrowserWindow, mode: 'left' | 'right') {
 
     const win = mainWindow
     const b = win.getBounds()
-    const { workArea, shownX, hiddenX } = calcDockTargets(win, dockMode)
+    const lockedDisplay = getDisplayById(dockDisplayId) ?? getDockDisplay(win)
+    const targets = calcDockTargets(win, dockMode, lockedDisplay)
+    const { workArea } = targets
 
     const cursor = screen.getCursorScreenPoint()
     const cursorInWorkArea =
@@ -368,16 +465,39 @@ function startDocking(win: BrowserWindow, mode: 'left' | 'right') {
         ? cursorInWorkArea && cursor.x <= workArea.x + DOCK_EDGE_TRIGGER_PX
         : cursorInWorkArea && cursor.x >= workArea.x + workArea.width - DOCK_EDGE_TRIGGER_PX
 
-    const shouldShow = cursorInWindow || onEdgeTrigger
-    const targetX = shouldShow ? shownX : hiddenX
+    const now = Date.now()
+    const hovering = cursorInWindow || onEdgeTrigger
+    if (hovering) dockLastHoverAt = now
 
-    const dx = targetX - b.x
-    if (Math.abs(dx) <= DOCK_STEP_PX) {
-      if (b.x !== Math.round(targetX)) win.setBounds({ x: Math.round(targetX) }, true)
-      return
+    // 延迟收起：鼠标离开后等待 hideDelayMs 再缩回去
+    const shouldShow = hovering || now - dockLastHoverAt < appSettings.dock.hideDelayMs
+    dockShown = shouldShow
+    const target = shouldShow ? targets.shown : targets.hidden
+
+    // 动画：宽度（以及右贴边时的 x）逐步逼近目标
+    const dw = target.width - b.width
+    const stepW = Math.abs(dw) <= DOCK_STEP_PX ? dw : dw > 0 ? DOCK_STEP_PX : -DOCK_STEP_PX
+
+    let nextWidth = b.width + stepW
+    if (Math.abs(dw) <= DOCK_STEP_PX) nextWidth = target.width
+
+    let nextX = b.x
+    if (dockMode === 'left') {
+      nextX = target.x
+    } else {
+      // 右贴边：保持右边缘对齐
+      const rightEdge = target.x + target.width
+      nextX = rightEdge - nextWidth
     }
-    const step = dx > 0 ? DOCK_STEP_PX : -DOCK_STEP_PX
-    win.setBounds({ x: Math.round(b.x + step) }, true)
+
+    const changed = nextWidth !== b.width || nextX !== b.x
+    if (changed) {
+      setBoundsInternal(
+        win,
+        { x: Math.round(nextX), width: Math.round(nextWidth), y: Math.round(target.y), height: Math.round(target.height) },
+        true
+      )
+    }
   }, DOCK_TICK_MS)
 }
 
@@ -403,6 +523,20 @@ async function createMainWindow() {
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true))
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false))
 
+  // 贴边模式下：用户只要主动移动/改变大小，就取消贴边（但不影响我们自己的动画 setBounds）
+  mainWindow.on('move', () => {
+    if (!mainWindow) return
+    if (!dockMode) return
+    if (dockInternalOps > 0) return
+    cancelDockingDueToUserMove(mainWindow)
+  })
+  mainWindow.on('resize', () => {
+    if (!mainWindow) return
+    if (!dockMode) return
+    if (dockInternalOps > 0) return
+    cancelDockingDueToUserMove(mainWindow)
+  })
+
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
   })
@@ -410,7 +544,10 @@ async function createMainWindow() {
   const devUrl = process.env.VITE_DEV_SERVER_URL
   if (devUrl) {
     await mainWindow.loadURL(devUrl)
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
+    // 默认不自动打开 DevTools；如需打开，请设置环境变量：ELECTRON_OPEN_DEVTOOLS=1
+    if (process.env.ELECTRON_OPEN_DEVTOOLS === '1') {
+      mainWindow.webContents.openDevTools({ mode: 'detach' })
+    }
   } else {
     await mainWindow.loadFile(getIndexHtmlPath())
   }
@@ -457,6 +594,10 @@ app.on('activate', async () => {
 })
 
 app.whenReady().then(async () => {
+  // 读取并应用设置（主题/语言/贴边参数）
+  appSettings = await readSettings()
+  nativeTheme.themeSource = appSettings.theme
+
   await createMainWindow()
 
   // ===== IPC =====
@@ -502,45 +643,47 @@ app.whenReady().then(async () => {
     return win?.isMaximized() ?? false
   })
 
-  ipcMain.handle('window:isAlwaysOnTop', async (evt) => {
-    const win = BrowserWindow.fromWebContents(evt.sender)
-    return win?.isAlwaysOnTop() ?? false
-  })
-
-  ipcMain.handle('window:setAlwaysOnTop', async (evt, value: boolean) => {
-    const win = BrowserWindow.fromWebContents(evt.sender)
-    if (!win) return
-    // macOS 用 floating 更符合“钉住到最上层”的直觉
-    win.setAlwaysOnTop(!!value, 'floating')
-    win.webContents.send('window:alwaysOnTop', !!value)
-  })
-
-  ipcMain.handle('window:toggleAlwaysOnTop', async (evt) => {
-    const win = BrowserWindow.fromWebContents(evt.sender)
-    if (!win) return false
-    const next = !win.isAlwaysOnTop()
-    win.setAlwaysOnTop(next, 'floating')
-    win.webContents.send('window:alwaysOnTop', next)
-    return next
-  })
-
   ipcMain.handle('window:dock', async (evt, mode: 'left' | 'center' | 'right') => {
     const win = BrowserWindow.fromWebContents(evt.sender)
     if (!win) return
 
     if (mode === 'center') {
+      // 退出贴边：恢复最小尺寸限制，并尽量恢复贴边前的窗口宽高
+      const restore = dockFullBounds
       stopDocking()
+      win.webContents.send('window:dockMode', 'center')
       const display = getDockDisplay(win)
       const wa = display.workArea
       const b = win.getBounds()
-      const x = wa.x + Math.round((wa.width - b.width) / 2)
-      const y = wa.y + Math.round((wa.height - b.height) / 2)
-      win.setBounds({ x, y }, true)
+      const width = restore?.width ?? b.width
+      const height = restore?.height ?? b.height
+      const x = wa.x + Math.round((wa.width - width) / 2)
+      const y = wa.y + Math.round((wa.height - height) / 2)
+      win.setBounds({ x, y, width, height }, true)
       return
     }
 
     // left / right
     startDocking(win, mode)
+  })
+
+  // ===== Settings =====
+  ipcMain.handle('settings:get', async () => {
+    return appSettings
+  })
+
+  ipcMain.handle('settings:update', async (_evt, patch: Partial<AppSettings>) => {
+    const next = sanitizeSettings(mergeSettings(appSettings, patch))
+    appSettings = next
+    nativeTheme.themeSource = next.theme
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0b0f17' : '#ffffff')
+      mainWindow.webContents.send('settings:changed', next)
+    }
+
+    await writeSettings(next)
+    return next
   })
 })
 

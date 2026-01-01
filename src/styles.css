@@ -12,8 +12,19 @@
   --editorFontStyle: normal;
 }
 
+:root[data-theme="dark"] {
+  --bg: #0b0f17;
+  --fg: #e5e7eb;
+  --muted: #9ca3af;
+  --border: #1f2937;
+  --tab: #0f172a;
+  --tabActive: #0b0f17;
+  --accent: #60a5fa;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]),
+  :root[data-theme="system"] {
     --bg: #0b0f17;
     --fg: #e5e7eb;
     --muted: #9ca3af;
@@ -57,6 +68,27 @@ body {
   -webkit-app-region: drag;
 }
 
+.topbar.docked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.titlebar-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.titlebar-row.row1 {
+  justify-content: space-between;
+}
+
+.titlebar-row.row2 {
+  justify-content: center;
+}
+
 .titlebar-left,
 .titlebar-right {
   display: flex;
@@ -78,6 +110,27 @@ body {
   align-items: center;
 }
 
+.icon-btn {
+  width: 30px;
+  height: 28px;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--tabActive);
+  color: var(--fg);
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .tabs {
   display: flex;
   gap: 6px;
@@ -85,6 +138,12 @@ body {
   flex: 0 1 auto;
   max-width: min(720px, 56vw);
   -webkit-app-region: drag;
+}
+
+.tabs.tabs-row2 {
+  max-width: 100%;
+  flex: 1;
+  justify-content: center;
 }
 
 .no-drag,
@@ -194,6 +253,41 @@ body {
 
 .btn:hover {
   border-color: color-mix(in oklab, var(--border), var(--accent) 30%);
+}
+
+.dropdown {
+  position: relative;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 160px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  z-index: 50;
+}
+
+.dropdown-item {
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.dropdown-item:hover {
+  background: color-mix(in oklab, var(--tabActive), var(--accent) 10%);
+  border-color: color-mix(in oklab, var(--border), var(--accent) 25%);
 }
 
 .window-controls {

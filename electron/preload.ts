@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { MenuCommand, OpenedFile, SaveFileRequest, SaveFileResponse } from './shared'
+import type { AppSettings, MenuCommand, OpenedFile, SaveFileRequest, SaveFileResponse } from './shared'
 
 export type ElectronAPI = {
   openFiles: () => Promise<OpenedFile[]>
@@ -14,10 +14,10 @@ export type ElectronAPI = {
   windowIsMaximized: () => Promise<boolean>
   onWindowMaximized: (handler: (isMaximized: boolean) => void) => () => void
   windowDock: (mode: 'left' | 'center' | 'right') => Promise<void>
-  windowIsAlwaysOnTop: () => Promise<boolean>
-  windowSetAlwaysOnTop: (value: boolean) => Promise<void>
-  windowToggleAlwaysOnTop: () => Promise<boolean>
-  onWindowAlwaysOnTop: (handler: (value: boolean) => void) => () => void
+  onWindowDockMode: (handler: (mode: 'left' | 'center' | 'right') => void) => () => void
+  getSettings: () => Promise<AppSettings>
+  updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
+  onSettingsChanged: (handler: (settings: AppSettings) => void) => () => void
 }
 
 const api: ElectronAPI = {
@@ -45,13 +45,17 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener('window:maximized', listener)
   },
   windowDock: (mode) => ipcRenderer.invoke('window:dock', mode),
-  windowIsAlwaysOnTop: () => ipcRenderer.invoke('window:isAlwaysOnTop'),
-  windowSetAlwaysOnTop: (value) => ipcRenderer.invoke('window:setAlwaysOnTop', value),
-  windowToggleAlwaysOnTop: () => ipcRenderer.invoke('window:toggleAlwaysOnTop'),
-  onWindowAlwaysOnTop: (handler) => {
-    const listener = (_evt: Electron.IpcRendererEvent, value: boolean) => handler(value)
-    ipcRenderer.on('window:alwaysOnTop', listener)
-    return () => ipcRenderer.removeListener('window:alwaysOnTop', listener)
+  onWindowDockMode: (handler) => {
+    const listener = (_evt: Electron.IpcRendererEvent, mode: 'left' | 'center' | 'right') => handler(mode)
+    ipcRenderer.on('window:dockMode', listener)
+    return () => ipcRenderer.removeListener('window:dockMode', listener)
+  },
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  updateSettings: (patch) => ipcRenderer.invoke('settings:update', patch),
+  onSettingsChanged: (handler) => {
+    const listener = (_evt: Electron.IpcRendererEvent, settings: AppSettings) => handler(settings)
+    ipcRenderer.on('settings:changed', listener)
+    return () => ipcRenderer.removeListener('settings:changed', listener)
   }
 }
 
