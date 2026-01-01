@@ -54,13 +54,47 @@ body {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--tab);
+  -webkit-app-region: drag;
+}
+
+.titlebar-left,
+.titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: fit-content;
+}
+
+.titlebar-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.nav-buttons {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
 }
 
 .tabs {
   display: flex;
   gap: 6px;
   overflow: auto;
-  flex: 1;
+  flex: 0 1 auto;
+  max-width: min(720px, 56vw);
+  -webkit-app-region: drag;
+}
+
+.no-drag,
+.tab,
+.tab button,
+.toolbar,
+.btn,
+.modal,
+.modal * {
+  -webkit-app-region: no-drag;
 }
 
 .tab {
@@ -112,6 +146,41 @@ body {
   align-items: center;
 }
 
+.dock-group {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--tab), var(--tabActive) 60%);
+  padding: 2px;
+  gap: 2px;
+}
+
+.seg-btn {
+  width: 32px;
+  height: 28px;
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg);
+  border-radius: 10px;
+  cursor: pointer;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.seg-btn:hover {
+  background: color-mix(in oklab, var(--tabActive), var(--accent) 10%);
+}
+
+.seg-btn.active {
+  background: color-mix(in oklab, var(--tabActive), var(--accent) 18%);
+  border-color: color-mix(in oklab, var(--border), var(--accent) 35%);
+}
+
 .btn {
   appearance: none;
   border: 1px solid var(--border);
@@ -125,6 +194,64 @@ body {
 
 .btn:hover {
   border-color: color-mix(in oklab, var(--border), var(--accent) 30%);
+}
+
+.window-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.window-controls.mac {
+  gap: 8px;
+  padding: 0 6px 0 2px;
+}
+
+.mac-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  padding: 0;
+  cursor: pointer;
+}
+
+.mac-dot.close {
+  background: #ff5f57;
+}
+.mac-dot.min {
+  background: #febc2e;
+}
+.mac-dot.max {
+  background: #28c840;
+}
+
+.window-controls.win {
+  margin-left: 6px;
+  gap: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.win-btn {
+  width: 44px;
+  height: 30px;
+  border: none;
+  background: var(--tabActive);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.win-btn:hover {
+  background: color-mix(in oklab, var(--tabActive), var(--accent) 12%);
+}
+
+.win-btn.close:hover {
+  background: #e11d48;
+  color: #fff;
 }
 
 .content {

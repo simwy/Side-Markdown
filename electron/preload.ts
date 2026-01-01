@@ -8,6 +8,16 @@ export type ElectronAPI = {
   quit: () => Promise<void>
   onMenuCommand: (handler: (cmd: MenuCommand) => void) => () => void
   onOpenedFiles: (handler: (files: OpenedFile[]) => void) => () => void
+  windowMinimize: () => Promise<void>
+  windowToggleMaximize: () => Promise<void>
+  windowClose: () => Promise<void>
+  windowIsMaximized: () => Promise<boolean>
+  onWindowMaximized: (handler: (isMaximized: boolean) => void) => () => void
+  windowDock: (mode: 'left' | 'center' | 'right') => Promise<void>
+  windowIsAlwaysOnTop: () => Promise<boolean>
+  windowSetAlwaysOnTop: (value: boolean) => Promise<void>
+  windowToggleAlwaysOnTop: () => Promise<boolean>
+  onWindowAlwaysOnTop: (handler: (value: boolean) => void) => () => void
 }
 
 const api: ElectronAPI = {
@@ -24,6 +34,24 @@ const api: ElectronAPI = {
     const listener = (_evt: Electron.IpcRendererEvent, files: OpenedFile[]) => handler(files)
     ipcRenderer.on('fs:openedFiles', listener)
     return () => ipcRenderer.removeListener('fs:openedFiles', listener)
+  },
+  windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+  windowToggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
+  windowClose: () => ipcRenderer.invoke('window:close'),
+  windowIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  onWindowMaximized: (handler) => {
+    const listener = (_evt: Electron.IpcRendererEvent, isMaximized: boolean) => handler(isMaximized)
+    ipcRenderer.on('window:maximized', listener)
+    return () => ipcRenderer.removeListener('window:maximized', listener)
+  },
+  windowDock: (mode) => ipcRenderer.invoke('window:dock', mode),
+  windowIsAlwaysOnTop: () => ipcRenderer.invoke('window:isAlwaysOnTop'),
+  windowSetAlwaysOnTop: (value) => ipcRenderer.invoke('window:setAlwaysOnTop', value),
+  windowToggleAlwaysOnTop: () => ipcRenderer.invoke('window:toggleAlwaysOnTop'),
+  onWindowAlwaysOnTop: (handler) => {
+    const listener = (_evt: Electron.IpcRendererEvent, value: boolean) => handler(value)
+    ipcRenderer.on('window:alwaysOnTop', listener)
+    return () => ipcRenderer.removeListener('window:alwaysOnTop', listener)
   }
 }
 

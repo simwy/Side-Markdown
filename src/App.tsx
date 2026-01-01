@@ -8,6 +8,8 @@ import { MarkdownToolbar } from './components/MarkdownToolbar'
 import { FontDialog } from './components/FontDialog'
 import { GotoLineDialog } from './components/GotoLineDialog'
 import { FindReplaceDialog } from './components/FindReplaceDialog'
+import { WindowControls } from './components/WindowControls'
+import { DockButtons } from './components/DockButtons'
 import { renderMarkdownToSafeHtml } from './markdown'
 
 function guessKindFromName(name: string): 'text' | 'markdown' {
@@ -33,7 +35,12 @@ function formatDateTime() {
   return d.toLocaleString()
 }
 
+function isMacPlatform() {
+  return navigator.userAgent.toLowerCase().includes('mac')
+}
+
 export function App() {
+  const isMac = useMemo(() => isMacPlatform(), [])
   const [tabs, setTabs] = useState<DocTab[]>(() => [
     {
       id: crypto.randomUUID(),
@@ -237,7 +244,10 @@ export function App() {
       case 'window:toggleMaximize':
       case 'window:minimize':
       case 'window:close':
-        // 这些由 Electron 自己处理更合适；菜单仍可保留在主进程
+        // frameless 窗口下，这些行为需要我们自己实现（按钮/双击/快捷键会走这里）
+        if (cmd.type === 'window:minimize') void window.electronAPI.windowMinimize()
+        if (cmd.type === 'window:toggleMaximize') void window.electronAPI.windowToggleMaximize()
+        if (cmd.type === 'window:close') void window.electronAPI.windowClose()
         return
       default:
         return
@@ -272,43 +282,71 @@ export function App() {
 
   return (
     <div className="app">
-      <div className="topbar">
-        <div className="tabs">
-          {tabs.map((t) => (
-            <div
-              key={t.id}
-              className={`tab ${t.id === activeId ? 'active' : ''}`}
-              onMouseDown={() => setActiveId(t.id)}
-              role="button"
-              tabIndex={0}
-            >
-              {t.dirty ? <span className="dirty" title="未保存" /> : null}
-              <span title={t.path ?? t.name}>{t.name}</span>
-              <button
-                aria-label="关闭"
-                title="关闭"
-                onMouseDown={(e) => {
-                  e.stopPropagation()
-                  closeTab(t.id)
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+      <div
+        className="topbar"
+        onDoubleClick={(e) => {
+          // 双击“标题栏空白区域”切换最大化/还原（避免双击 tab/按钮触发）
+          const el = e.target as HTMLElement
+          if (el.closest('button,input,select,textarea,a,.tab,.no-drag')) return
+          void window.electronAPI.windowToggleMaximize()
+        }}
+      >
+        <div className="titlebar-left">
+          {isMac ? <WindowControls /> : null}
+          <div className="nav-buttons no-drag" aria-label="Navigation">
+            <button className="icon-btn" title="Back" disabled>
+              ‹
+            </button>
+            <button className="icon-btn" title="Forward" disabled>
+              ›
+            </button>
+          </div>
         </div>
 
-        {activeTab.kind === 'markdown' ? <MarkdownToolbar view={editorViewRef.current} /> : null}
+        <div className="titlebar-center">
+          <div className="tabs">
+            {tabs.map((t) => (
+              <div
+                key={t.id}
+                className={`tab ${t.id === activeId ? 'active' : ''}`}
+                onMouseDown={() => setActiveId(t.id)}
+                role="button"
+                tabIndex={0}
+              >
+                {t.dirty ? <span className="dirty" title="未保存" /> : null}
+                <span title={t.path ?? t.name}>{t.name}</span>
+                <button
+                  aria-label="关闭"
+                  title="关闭"
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    closeTab(t.id)
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
 
-        <button className="btn" onClick={newTab}>
-          新建
-        </button>
-        <button className="btn" onClick={() => void openFiles()}>
-          打开
-        </button>
-        <button className="btn" onClick={() => void saveActive(false)}>
-          保存
-        </button>
+        <div className="titlebar-right">
+          {activeTab.kind === 'markdown' ? <MarkdownToolbar view={editorViewRef.current} /> : null}
+
+          <button className="btn no-drag" onClick={newTab}>
+            新建
+          </button>
+          <button className="btn no-drag" onClick={() => void openFiles()}>
+            打开
+          </button>
+          <button className="btn no-drag" onClick={() => void saveActive(false)}>
+            保存
+          </button>
+
+          <DockButtons />
+
+          {!isMac ? <WindowControls /> : null}
+        </div>
       </div>
 
       <div className="content">

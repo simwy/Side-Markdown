@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import chardet from 'chardet'
@@ -13,6 +13,11 @@ import {
 } from './shared'
 
 const isMac = process.platform === 'darwin'
+const DOCK_MARGIN_PX = 10
+const DOCK_PEEK_PX = 14
+const DOCK_EDGE_TRIGGER_PX = 2
+const DOCK_TICK_MS = 40
+const DOCK_STEP_PX = 26
 
 function getPreloadPath() {
   // tsup 输出到 dist-electron/preload.cjs
@@ -290,6 +295,91 @@ function buildAppMenu(winGetter: () => BrowserWindow | null) {
 
 let mainWindow: BrowserWindow | null = null
 let pendingOpenFilePaths: string[] = []
+let dockTimer: NodeJS.Timeout | null = null
+let dockMode: 'left' | 'right' | null = null
+
+function stopDocking() {
+  dockMode = null
+  if (dockTimer) {
+    clearInterval(dockTimer)
+    dockTimer = null
+  }
+}
+
+function getDockDisplay(win: BrowserWindow) {
+  const b = win.getBounds()
+  return screen.getDisplayMatching(b)
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n))
+}
+
+function calcDockTargets(win: BrowserWindow, mode: 'left' | 'right') {
+  const display = getDockDisplay(win)
+  const wa = display.workArea
+  const b = win.getBounds()
+
+  const width = clamp(b.width, 520, wa.width)
+  const height = clamp(b.height, 420, wa.height)
+  const y = clamp(b.y, wa.y, wa.y + wa.height - height)
+
+  const shownX = mode === 'left' ? wa.x + DOCK_MARGIN_PX : wa.x + wa.width - width - DOCK_MARGIN_PX
+  const hiddenX =
+    mode === 'left'
+      ? wa.x + DOCK_MARGIN_PX - (width - DOCK_PEEK_PX)
+      : wa.x + wa.width - DOCK_MARGIN_PX - DOCK_PEEK_PX
+
+  return { workArea: wa, width, height, y, shownX, hiddenX }
+}
+
+function startDocking(win: BrowserWindow, mode: 'left' | 'right') {
+  dockMode = mode
+
+  const { hiddenX, width, height, y } = calcDockTargets(win, mode)
+  win.setBounds({ x: Math.round(hiddenX), y: Math.round(y), width: Math.round(width), height: Math.round(height) }, true)
+
+  if (dockTimer) return
+  dockTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      stopDocking()
+      return
+    }
+    if (!dockMode) {
+      stopDocking()
+      return
+    }
+
+    const win = mainWindow
+    const b = win.getBounds()
+    const { workArea, shownX, hiddenX } = calcDockTargets(win, dockMode)
+
+    const cursor = screen.getCursorScreenPoint()
+    const cursorInWorkArea =
+      cursor.x >= workArea.x &&
+      cursor.x <= workArea.x + workArea.width &&
+      cursor.y >= workArea.y &&
+      cursor.y <= workArea.y + workArea.height
+
+    const cursorInWindow = cursor.x >= b.x && cursor.x <= b.x + b.width && cursor.y >= b.y && cursor.y <= b.y + b.height
+
+    const onEdgeTrigger =
+      dockMode === 'left'
+        ? cursorInWorkArea && cursor.x <= workArea.x + DOCK_EDGE_TRIGGER_PX
+        : cursorInWorkArea && cursor.x >= workArea.x + workArea.width - DOCK_EDGE_TRIGGER_PX
+
+    const shouldShow = cursorInWindow || onEdgeTrigger
+    const targetX = shouldShow ? shownX : hiddenX
+
+    const dx = targetX - b.x
+    if (Math.abs(dx) <= DOCK_STEP_PX) {
+      if (b.x !== Math.round(targetX)) win.setBounds({ x: Math.round(targetX) }, true)
+      return
+    }
+    const step = dx > 0 ? DOCK_STEP_PX : -DOCK_STEP_PX
+    win.setBounds({ x: Math.round(b.x + step) }, true)
+  }, DOCK_TICK_MS)
+}
 
 async function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -299,6 +389,7 @@ async function createMainWindow() {
     minWidth: 900,
     minHeight: 520,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0b0f17' : '#ffffff',
+    frame: false,
     show: false,
     webPreferences: {
       preload: getPreloadPath(),
@@ -307,6 +398,10 @@ async function createMainWindow() {
       sandbox: true
     }
   })
+
+  // 主进程监听窗口状态变化，通知 renderer 更新“最大化/还原”按钮状态
+  mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true))
+  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false))
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
@@ -382,6 +477,70 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('app:quit', async () => {
     app.quit()
+  })
+
+  // ===== Window controls (frameless title bar) =====
+  ipcMain.handle('window:minimize', async (evt) => {
+    const win = BrowserWindow.fromWebContents(evt.sender)
+    win?.minimize()
+  })
+
+  ipcMain.handle('window:toggleMaximize', async (evt) => {
+    const win = BrowserWindow.fromWebContents(evt.sender)
+    if (!win) return
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
+  })
+
+  ipcMain.handle('window:close', async (evt) => {
+    const win = BrowserWindow.fromWebContents(evt.sender)
+    win?.close()
+  })
+
+  ipcMain.handle('window:isMaximized', async (evt) => {
+    const win = BrowserWindow.fromWebContents(evt.sender)
+    return win?.isMaximized() ?? false
+  })
+
+  ipcMain.handle('window:isAlwaysOnTop', async (evt) => {
+    const win = BrowserWindow.fromWebContents(evt.sender)
+    return win?.isAlwaysOnTop() ?? false
+  })
+
+  ipcMain.handle('window:setAlwaysOnTop', async (evt, value: boolean) => {
+    const win = BrowserWindow.fromWebContents(evt.sender)
+    if (!win) return
+    // macOS 用 floating 更符合“钉住到最上层”的直觉
+    win.setAlwaysOnTop(!!value, 'floating')
+    win.webContents.send('window:alwaysOnTop', !!value)
+  })
+
+  ipcMain.handle('window:toggleAlwaysOnTop', async (evt) => {
+    const win = BrowserWindow.fromWebContents(evt.sender)
+    if (!win) return false
+    const next = !win.isAlwaysOnTop()
+    win.setAlwaysOnTop(next, 'floating')
+    win.webContents.send('window:alwaysOnTop', next)
+    return next
+  })
+
+  ipcMain.handle('window:dock', async (evt, mode: 'left' | 'center' | 'right') => {
+    const win = BrowserWindow.fromWebContents(evt.sender)
+    if (!win) return
+
+    if (mode === 'center') {
+      stopDocking()
+      const display = getDockDisplay(win)
+      const wa = display.workArea
+      const b = win.getBounds()
+      const x = wa.x + Math.round((wa.width - b.width) / 2)
+      const y = wa.y + Math.round((wa.height - b.height) / 2)
+      win.setBounds({ x, y }, true)
+      return
+    }
+
+    // left / right
+    startDocking(win, mode)
   })
 })
 

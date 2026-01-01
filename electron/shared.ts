@@ -51,5 +51,6 @@ export type MenuCommand =
   | { type: 'window:minimize' }
   | { type: 'window:toggleMaximize' }
   | { type: 'window:close' }
+  | { type: 'window:dock'; mode: 'left' | 'center' | 'right' }
 
 
