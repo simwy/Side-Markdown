@@ -28,6 +28,20 @@ export type I18nKey =
   | 'settings.shownWidth'
   | 'cancel'
   | 'apply'
+  | 'md.heading'
+  | 'md.bold'
+  | 'md.italic'
+  | 'md.strike'
+  | 'md.inlineCode'
+  | 'md.codeBlock'
+  | 'md.quote'
+  | 'md.ul'
+  | 'md.ol'
+  | 'md.task'
+  | 'md.link'
+  | 'md.image'
+  | 'md.table'
+  | 'md.hr'
 
 const dict: Record<Locale, Record<I18nKey, string>> = {
   'zh-CN': {
@@ -57,7 +71,21 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.hiddenWidth': '靠边收缩宽度（px）',
     'settings.shownWidth': '靠边展开宽度（px）',
     cancel: '取消',
-    apply: '应用'
+    apply: '应用',
+    'md.heading': '标题（#）',
+    'md.bold': '加粗（**）',
+    'md.italic': '斜体（*）',
+    'md.strike': '删除线（~~）',
+    'md.inlineCode': '行内代码（`）',
+    'md.codeBlock': '代码块（```）',
+    'md.quote': '引用（>）',
+    'md.ul': '无序列表（-）',
+    'md.ol': '有序列表（1.）',
+    'md.task': '任务列表（- [ ]）',
+    'md.link': '链接（[text](url)）',
+    'md.image': '图片（![alt](url)）',
+    'md.table': '表格',
+    'md.hr': '分割线（---）'
   },
   'zh-TW': {
     new: '新增',
@@ -86,7 +114,21 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.hiddenWidth': '靠邊收縮寬度（px）',
     'settings.shownWidth': '靠邊展開寬度（px）',
     cancel: '取消',
-    apply: '套用'
+    apply: '套用',
+    'md.heading': '標題（#）',
+    'md.bold': '粗體（**）',
+    'md.italic': '斜體（*）',
+    'md.strike': '刪除線（~~）',
+    'md.inlineCode': '行內程式碼（`）',
+    'md.codeBlock': '程式碼區塊（```）',
+    'md.quote': '引用（>）',
+    'md.ul': '無序清單（-）',
+    'md.ol': '有序清單（1.）',
+    'md.task': '任務清單（- [ ]）',
+    'md.link': '連結（[text](url)）',
+    'md.image': '圖片（![alt](url)）',
+    'md.table': '表格',
+    'md.hr': '分隔線（---）'
   },
   en: {
     new: 'New',
@@ -115,7 +157,21 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.hiddenWidth': 'Collapsed width (px)',
     'settings.shownWidth': 'Expanded width (px)',
     cancel: 'Cancel',
-    apply: 'Apply'
+    apply: 'Apply',
+    'md.heading': 'Heading (#)',
+    'md.bold': 'Bold (**)',
+    'md.italic': 'Italic (*)',
+    'md.strike': 'Strikethrough (~~)',
+    'md.inlineCode': 'Inline code (`)',
+    'md.codeBlock': 'Code block (```)',
+    'md.quote': 'Quote (>)',
+    'md.ul': 'Bulleted list (-)',
+    'md.ol': 'Numbered list (1.)',
+    'md.task': 'Task list (- [ ])',
+    'md.link': 'Link ([text](url))',
+    'md.image': 'Image (![alt](url))',
+    'md.table': 'Table',
+    'md.hr': 'Horizontal rule (---)'
   },
   ja: {
     new: '新規',
@@ -144,7 +200,21 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.hiddenWidth': '収納幅（px）',
     'settings.shownWidth': '展開幅（px）',
     cancel: 'キャンセル',
-    apply: '適用'
+    apply: '適用',
+    'md.heading': '見出し（#）',
+    'md.bold': '太字（**）',
+    'md.italic': '斜体（*）',
+    'md.strike': '取り消し線（~~）',
+    'md.inlineCode': 'インラインコード（`）',
+    'md.codeBlock': 'コードブロック（```）',
+    'md.quote': '引用（>）',
+    'md.ul': '箇条書き（-）',
+    'md.ol': '番号付きリスト（1.）',
+    'md.task': 'タスクリスト（- [ ]）',
+    'md.link': 'リンク（[text](url)）',
+    'md.image': '画像（![alt](url)）',
+    'md.table': '表',
+    'md.hr': '区切り線（---）'
   },
   ko: {
     new: '새로 만들기',
@@ -173,7 +243,21 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.hiddenWidth': '접힘 너비(px)',
     'settings.shownWidth': '펼침 너비(px)',
     cancel: '취소',
-    apply: '적용'
+    apply: '적용',
+    'md.heading': '제목(#)',
+    'md.bold': '굵게(**)',
+    'md.italic': '기울임(*)',
+    'md.strike': '취소선(~~)',
+    'md.inlineCode': '인라인 코드(`)',
+    'md.codeBlock': '코드 블록(```)',
+    'md.quote': '인용(>)',
+    'md.ul': '글머리 기호 목록(-)',
+    'md.ol': '번호 매기기 목록(1.)',
+    'md.task': '작업 목록(- [ ])',
+    'md.link': '링크([text](url))',
+    'md.image': '이미지(![alt](url))',
+    'md.table': '표',
+    'md.hr': '가로줄(---)'
   }
 }
 

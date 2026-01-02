@@ -69,13 +69,13 @@ export function App() {
       name: createUntitledName(1),
       kind: 'markdown',
       encoding: 'utf8',
-      content: `## 标题 1
-### 标题 1.1
-### 标题 1.2
+      content: `##  1
+###  1.1
+###  1.2
 
-## 标题 2
-### 标题 2.1
-### 标题 2.2
+##  2
+###  2.1
+###  2.2
 `,
       dirty: false,
       createdAt: Date.now()
@@ -99,8 +99,6 @@ export function App() {
 
   const activeTab = useMemo(() => tabs.find((t) => t.id === activeId) ?? tabs[0]!, [tabs, activeId])
   const editorViewRef = useRef<EditorView | null>(null)
-  const tabsRefCenter = useRef<HTMLDivElement | null>(null)
-  const tabsRefDocked = useRef<HTMLDivElement | null>(null)
 
   const activeIndex = useMemo(() => {
     const idx = tabs.findIndex((t) => t.id === activeId)
@@ -116,16 +114,6 @@ export function App() {
     if (!canGoNextTab) return
     setActiveId(tabs[activeIndex + 1]!.id)
   }
-
-  useEffect(() => {
-    // 切换 tab 时：让当前活跃 tab 自动滚动到可见区域（不显示滚动条，但仍可滚动）
-    const root = dockMode === 'center' ? tabsRefCenter.current : tabsRefDocked.current
-    if (!root) return
-    const el = root.querySelector(`[data-tab-id="${activeId}"]`) as HTMLElement | null
-    if (!el) return
-    // 使用最近滚动容器，避免影响其它区域
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
-  }, [activeId, tabs.length, dockMode])
 
   useEffect(() => {
     applyFontCssVars(font)
@@ -185,13 +173,13 @@ export function App() {
       name: createUntitledName(count),
       kind: 'markdown',
       encoding: 'utf8',
-      content: `## 标题 1
-### 标题 1.1
-### 标题 1.2
+      content: `##  1.title
+###  1.1.title
+###  1.2.title
 
-## 标题 2
-### 标题 2.1
-### 标题 2.2
+##  2.title
+###  2.1.title
+###  2.2.title
 `,
       dirty: false,
       createdAt: Date.now()
@@ -498,12 +486,11 @@ export function App() {
             </div>
 
             <div className="titlebar-row row2">
-              <div className="tabs tabs-row2" ref={tabsRefDocked}>
+              <div className="tabs tabs-row2">
                 {tabs.map((t) => (
                   <div
                     key={t.id}
                     className={`tab ${t.id === activeId ? 'active' : ''}`}
-                    data-tab-id={t.id}
                     onMouseDown={() => setActiveId(t.id)}
                     role="button"
                     tabIndex={0}
@@ -540,12 +527,11 @@ export function App() {
             </div>
 
             <div className="titlebar-center">
-              <div className="tabs" ref={tabsRefCenter}>
+              <div className="tabs">
                 {tabs.map((t) => (
                   <div
                     key={t.id}
                     className={`tab ${t.id === activeId ? 'active' : ''}`}
-                    data-tab-id={t.id}
                     onMouseDown={() => setActiveId(t.id)}
                     role="button"
                     tabIndex={0}
@@ -634,7 +620,7 @@ export function App() {
                     <div className="editor-shell">
                       {isMarkdown ? (
                         <div className="editor-side-toolbar">
-                          <MarkdownToolbar view={editorViewRef.current} layout="vertical" variant="icon" />
+                          <MarkdownToolbar view={editorViewRef.current} locale={locale} layout="vertical" variant="icon" />
                         </div>
                       ) : null}
                       <div className="editor-host">
