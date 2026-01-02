@@ -10,6 +10,15 @@
   --editorFontSize: 14px;
   --editorFontWeight: 400;
   --editorFontStyle: normal;
+
+  /* Editor color tokens (follow theme) */
+  --editorBg: var(--bg);
+  --editorFg: var(--fg);
+  --editorGutterBg: color-mix(in oklab, var(--bg), var(--fg) 4%);
+  --editorGutterFg: color-mix(in oklab, var(--fg), var(--bg) 40%);
+  --editorActiveLine: color-mix(in oklab, var(--accent), var(--bg) 92%);
+  --editorSelection: color-mix(in oklab, var(--accent), var(--bg) 80%);
+  --editorCursor: var(--fg);
 }
 
 :root[data-theme="dark"] {
@@ -40,22 +49,86 @@ body {
   height: 100%;
 }
 
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
     "Apple Color Emoji", "Segoe UI Emoji";
+  /* 禁止页面级滚动，避免标题栏跟着滚；滚动应发生在编辑区/预览区等内部容器 */
+  overflow: hidden;
 }
 
 * {
   box-sizing: border-box;
 }
 
+:root {
+  /* Scrollbar tokens (follow theme) */
+  --scrollbarSize: 10px;
+  --scrollbarTrack: color-mix(in oklab, var(--bg), var(--fg) 6%);
+  --scrollbarThumb: color-mix(in oklab, var(--bg), var(--fg) 22%);
+  --scrollbarThumbHover: color-mix(in oklab, var(--bg), var(--fg) 32%);
+}
+
+:root[data-theme="dark"] {
+  --scrollbarTrack: rgba(255, 255, 255, 0.06);
+  --scrollbarThumb: rgba(255, 255, 255, 0.22);
+  --scrollbarThumbHover: rgba(255, 255, 255, 0.32);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]),
+  :root[data-theme="system"] {
+    --scrollbarTrack: rgba(255, 255, 255, 0.06);
+    --scrollbarThumb: rgba(255, 255, 255, 0.22);
+    --scrollbarThumbHover: rgba(255, 255, 255, 0.32);
+  }
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbarThumb) var(--scrollbarTrack);
+}
+
+/* Chromium/Electron */
+*::-webkit-scrollbar {
+  width: var(--scrollbarSize);
+  height: var(--scrollbarSize);
+}
+*::-webkit-scrollbar-track {
+  background: var(--scrollbarTrack);
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbarThumb);
+  border-radius: 999px;
+  border: 2px solid var(--scrollbarTrack);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbarThumbHover);
+}
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbarTrack);
+}
+
 .app {
+  /* 让整体高度始终等于窗体高度（再由 flex 自动分配：标题栏 + 内容区 + 状态栏） */
   height: 100%;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+@supports (height: 100dvh) {
+  .app {
+    /* Electron/Chromium 下更稳：避免极端情况下 100vh/100% 取值不一致 */
+    min-height: 100dvh;
+  }
 }
 
 .topbar {
@@ -205,6 +278,66 @@ body {
   align-items: center;
 }
 
+.toolbar.vertical {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.md-toolbar.icon {
+  gap: 8px;
+}
+
+.md-tool-btn {
+  width: 34px;
+  height: 32px;
+  border-radius: 10px;
+  padding: 0;
+}
+
+.md-tool-btn svg {
+  display: block;
+  margin: 0 auto;
+}
+
+.editor-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  width: 100%;
+  flex: 1;
+}
+
+.editor-side-toolbar {
+  width: 46px;
+  min-width: 46px;
+  height: 100%;
+  padding: 8px 6px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in oklab, var(--tab), var(--bg) 70%);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.editor-host {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.editor-host .editor-pane {
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+
+.editor-host .cm-editor,
+.editor-host .cm-scroller {
+  height: 100%;
+  min-height: 0;
+}
+
 .dock-group {
   display: inline-flex;
   align-items: center;
@@ -352,6 +485,7 @@ body {
   flex: 1;
   display: flex;
   min-height: 0;
+  overflow: hidden;
 }
 
 .split {
@@ -359,11 +493,18 @@ body {
   grid-template-columns: 1fr 1fr;
   width: 100%;
   min-height: 0;
+  /* 作为 .content 的 flex 子元素时，必须占满剩余高度 */
+  flex: 1;
 }
 
 .pane {
   min-height: 0;
   border-right: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* 作为 .content 的直接子元素时，必须占满剩余高度 */
+  flex: 1;
 }
 
 .pane:last-child {
