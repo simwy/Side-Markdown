@@ -322,7 +322,6 @@ export function App() {
             <div className="titlebar-row row1">
               <div className="titlebar-left">
                 {/* 贴边模式下隐藏窗口控制按钮（最小化/最大化/关闭） */}
-                {isMac ? null : null}
                 <div className="nav-buttons no-drag" aria-label="Navigation">
                   <button className="icon-btn" title="Back" disabled>
                     ‹
@@ -336,19 +335,19 @@ export function App() {
               <div className="titlebar-right">
                 {activeTab.kind === 'markdown' ? <MarkdownToolbar view={editorViewRef.current} /> : null}
 
+                <DockButtons mode={dockMode} />
+
                 <TitlebarDropdown
                   buttonLabel={t(locale, 'menu')}
                   items={[
                     { label: t(locale, 'new'), onClick: newTab },
                     { label: t(locale, 'open'), onClick: () => void openFiles() },
-                    { label: t(locale, 'settings'), onClick: () => setShowSettings(true) }
+                    { label: t(locale, 'settings'), onClick: () => setShowSettings(true) },
+                    { label: t(locale, 'quit'), onClick: () => void window.electronAPI.quit() }
                   ]}
                 />
 
-                <DockButtons />
-
                 {/* 贴边模式下隐藏窗口控制按钮（最小化/最大化/关闭） */}
-                {!isMac ? null : null}
               </div>
             </div>
 
@@ -437,7 +436,7 @@ export function App() {
                 {t(locale, 'settings')}
               </button>
 
-              <DockButtons />
+              <DockButtons mode={dockMode} />
 
               {!isMac ? <WindowControls /> : null}
             </div>

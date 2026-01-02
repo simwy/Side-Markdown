@@ -17,8 +17,8 @@ import { getDefaultSettings, mergeSettings, readSettings, sanitizeSettings, writ
 const isMac = process.platform === 'darwin'
 const DOCK_MARGIN_PX = 10
 const DOCK_EDGE_TRIGGER_PX = 2
-const DOCK_TICK_MS = 40
-const DOCK_STEP_PX = 26
+// 贴边逻辑 tick：用于检测 hover / blur / delay
+const DOCK_TICK_MS = 10
 
 function getPreloadPath() {
   // tsup 输出到 dist-electron/preload.cjs
@@ -301,21 +301,29 @@ let appSettings: AppSettings = getDefaultSettings()
 
 let dockTimer: NodeJS.Timeout | null = null
 let dockMode: 'left' | 'right' | null = null
+let dockPinned: boolean = false
 let dockDisplayId: number | null = null
 let dockFullBounds: { width: number; height: number; y: number } | null = null
 let dockShown: boolean = false
 let dockPrevMinSize: { width: number; height: number } | null = null
 let dockInternalOps = 0
 let dockLastHoverAt = 0
+let dockHideRequestedAt = 0
+let dockSettingsWriteTimer: NodeJS.Timeout | null = null
+let windowAlwaysOnTop: boolean = false
 
 function stopDocking() {
   dockMode = null
+  dockPinned = false
   dockDisplayId = null
   dockFullBounds = null
   dockShown = false
+  dockHideRequestedAt = 0
   // 退出贴边后取消置顶（贴边期间临时置顶）
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setAlwaysOnTop(false)
+    if (windowAlwaysOnTop) mainWindow.setAlwaysOnTop(true, 'floating')
+    else mainWindow.setAlwaysOnTop(false)
+    mainWindow.webContents.send('window:dockPinned', false)
   }
   if (mainWindow && !mainWindow.isDestroyed() && dockPrevMinSize) {
     mainWindow.setMinimumSize(dockPrevMinSize.width, dockPrevMinSize.height)
@@ -339,25 +347,81 @@ function setBoundsInternal(win: BrowserWindow, bounds: Partial<Electron.Rectangl
   }
 }
 
-function cancelDockingDueToUserMove(win: BrowserWindow) {
+function handleResizeWhileDocked(win: BrowserWindow) {
   if (!dockMode) return
-  const mode = dockMode
-  const restoreMin = dockPrevMinSize
+  // 允许用户调整“宽度/高度/位置”，并记忆：
+  // - 宽度（仅在展开状态下）：同步写回设置的 shownWidthPx（设置面板可见）
+  // - 高度：写回设置的 shownHeightPx（用于记忆，不一定在面板中暴露）
+  // 同时保持贴边对齐规则不变
   const b = win.getBounds()
-  const targetWidth = appSettings.dock.shownWidthPx
-  const targetHeight = dockFullBounds?.height ?? b.height
-
-  stopDocking()
-  win.webContents.send('window:dockMode', 'center')
-
-  if (restoreMin) win.setMinimumSize(restoreMin.width, restoreMin.height)
-
-  // 取消贴边后，保留用户拖动到的新位置，只恢复一个可用宽度（200px）
-  if (b.width < targetWidth) {
-    const rightEdge = b.x + b.width
-    const x = mode === 'right' ? rightEdge - targetWidth : b.x
-    setBoundsInternal(win, { x: Math.round(x), width: targetWidth, height: targetHeight }, true)
+  if (!dockFullBounds) {
+    dockFullBounds = { width: b.width, height: b.height, y: b.y }
+  } else {
+    dockFullBounds = { ...dockFullBounds, height: b.height, y: b.y }
   }
+  if (dockShown) {
+    dockFullBounds = { ...dockFullBounds, width: b.width }
+  }
+
+  // 记录“用户期望的展开尺寸”
+  // 注意：收缩态的宽度很窄（hiddenWidthPx），不应覆盖用户设置的展开宽度
+  const nextDock = {
+    ...appSettings.dock,
+    ...(dockShown ? { shownWidthPx: clamp(b.width, 60, 2000) } : {}),
+    shownHeightPx: clamp(b.height, 420, 5000)
+  }
+  const merged = sanitizeSettings(mergeSettings(appSettings, { dock: nextDock }))
+  if (
+    merged.dock.shownWidthPx !== appSettings.dock.shownWidthPx ||
+    merged.dock.shownHeightPx !== appSettings.dock.shownHeightPx
+  ) {
+    applyAppSettings(merged)
+  }
+
+  const lockedDisplay = getDisplayById(dockDisplayId) ?? getDockDisplay(win)
+  const targets = calcDockTargets(win, dockMode, lockedDisplay)
+  const target = dockShown ? targets.shown : targets.hidden
+
+  // 右贴边需要保持右边缘对齐
+  let x = target.x
+  if (dockMode === 'right') {
+    const rightEdge = target.x + target.width
+    x = rightEdge - target.width
+  }
+
+  setBoundsInternal(
+    win,
+    { x: Math.round(x), y: Math.round(target.y), width: Math.round(target.width), height: Math.round(target.height) },
+    false
+  )
+}
+
+function handleMoveWhileDocked(win: BrowserWindow) {
+  if (!dockMode) return
+  // 允许用户拖动改变 y（上下位置），但保持贴边宽度/x 逻辑不变
+  const b = win.getBounds()
+  if (!dockFullBounds) {
+    dockFullBounds = { width: b.width, height: b.height, y: b.y }
+  } else {
+    dockFullBounds = { ...dockFullBounds, y: b.y }
+  }
+
+  const lockedDisplay = getDisplayById(dockDisplayId) ?? getDockDisplay(win)
+  const targets = calcDockTargets(win, dockMode, lockedDisplay)
+  const target = dockShown ? targets.shown : targets.hidden
+
+  // 右贴边需要保持右边缘对齐
+  let x = target.x
+  if (dockMode === 'right') {
+    const rightEdge = target.x + target.width
+    x = rightEdge - target.width
+  }
+
+  setBoundsInternal(
+    win,
+    { x: Math.round(x), y: Math.round(target.y), width: Math.round(target.width), height: Math.round(target.height) },
+    false
+  )
 }
 
 function getDockDisplay(win: BrowserWindow) {
@@ -372,6 +436,28 @@ function getDisplayById(id: number | null) {
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
+}
+
+function scheduleWriteAppSettings(next: AppSettings) {
+  // 防抖：用户拖拽调整尺寸时，会连续触发 resize
+  if (dockSettingsWriteTimer) clearTimeout(dockSettingsWriteTimer)
+  dockSettingsWriteTimer = setTimeout(() => {
+    dockSettingsWriteTimer = null
+    void writeSettings(next)
+  }, 300)
+}
+
+function applyAppSettings(next: AppSettings) {
+  const prevTheme = appSettings.theme
+  appSettings = next
+  nativeTheme.themeSource = next.theme
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (prevTheme !== next.theme) {
+      mainWindow.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0b0f17' : '#ffffff')
+    }
+    mainWindow.webContents.send('settings:changed', next)
+  }
+  scheduleWriteAppSettings(next)
 }
 
 function calcDockTargets(
@@ -407,9 +493,14 @@ function startDocking(win: BrowserWindow, mode: 'left' | 'right') {
   dockDisplayId = getDockDisplay(win).id
   {
     const b = win.getBounds()
-    dockFullBounds = { width: b.width, height: b.height, y: b.y }
+    dockFullBounds = {
+      width: b.width,
+      height: appSettings.dock.shownHeightPx ?? b.height,
+      y: b.y
+    }
   }
   dockShown = false
+  dockHideRequestedAt = 0
   // 贴边模式下临时置顶，确保始终在最前端（退出贴边会恢复）
   win.setAlwaysOnTop(true, 'floating')
   if (!dockPrevMinSize) {
@@ -466,21 +557,42 @@ function startDocking(win: BrowserWindow, mode: 'left' | 'right') {
         : cursorInWorkArea && cursor.x >= workArea.x + workArea.width - DOCK_EDGE_TRIGGER_PX
 
     const now = Date.now()
-    const hovering = cursorInWindow || onEdgeTrigger
-    if (hovering) dockLastHoverAt = now
+    // 说明：
+    // - `onEdgeTrigger` 只用于“隐藏状态下”触发展开（把鼠标顶到屏幕边缘就能拉出）。
+    // - 已展开/刚失焦时，不应被 `onEdgeTrigger` 抵消回收逻辑，否则会出现“失焦后立即又弹出”的感觉。
+    const hoveringToShow = cursorInWindow || onEdgeTrigger
+    if (cursorInWindow) {
+      dockLastHoverAt = now
+      dockHideRequestedAt = 0 // 用户回到窗口（可见区域），取消回收请求
+    }
 
-    // 延迟收起：鼠标离开后等待 hideDelayMs 再缩回去
-    const shouldShow = hovering || now - dockLastHoverAt < appSettings.dock.hideDelayMs
+    // 需求：非钉住状态下，“鼠标离开不回收”，而是“窗口失去焦点(blur)后回收”。
+    // - 未展开时：hover（窗口内/边缘触发）展开
+    // - 已展开时：
+    //    - 钉住：保持展开
+    //    - 非钉住：只要失焦就回收
+    let shouldShow: boolean
+    if (!dockShown) {
+      // 如果刚刚因为 blur 回收：要求用户把鼠标移回“窗口可见区域（那条窄边）”再展开，
+      // 避免在屏幕边缘点其它东西后又立刻弹回。
+      if (dockHideRequestedAt > 0 && !cursorInWindow) {
+        shouldShow = false
+      } else {
+        shouldShow = hoveringToShow
+      }
+    } else if (dockPinned) {
+      shouldShow = true
+    } else if (dockHideRequestedAt > 0) {
+      // 回收只由 blur 触发：避免“悬停展开但窗口未聚焦”导致展开/回收抖动循环
+      shouldShow = false
+    } else {
+      shouldShow = true
+    }
     dockShown = shouldShow
     const target = shouldShow ? targets.shown : targets.hidden
 
-    // 动画：宽度（以及右贴边时的 x）逐步逼近目标
-    const dw = target.width - b.width
-    const stepW = Math.abs(dw) <= DOCK_STEP_PX ? dw : dw > 0 ? DOCK_STEP_PX : -DOCK_STEP_PX
-
-    let nextWidth = b.width + stepW
-    if (Math.abs(dw) <= DOCK_STEP_PX) nextWidth = target.width
-
+    // 需求：弹出/收缩过程不做逐步动画，直接设置到目标宽度（更干脆、更稳定）
+    const nextWidth = target.width
     let nextX = b.x
     if (dockMode === 'left') {
       nextX = target.x
@@ -490,12 +602,12 @@ function startDocking(win: BrowserWindow, mode: 'left' | 'right') {
       nextX = rightEdge - nextWidth
     }
 
-    const changed = nextWidth !== b.width || nextX !== b.x
+    const changed = nextWidth !== b.width || nextX !== b.x || b.y !== target.y || b.height !== target.height
     if (changed) {
       setBoundsInternal(
         win,
         { x: Math.round(nextX), width: Math.round(nextWidth), y: Math.round(target.y), height: Math.round(target.height) },
-        true
+        false
       )
     }
   }, DOCK_TICK_MS)
@@ -523,18 +635,52 @@ async function createMainWindow() {
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true))
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false))
 
-  // 贴边模式下：用户只要主动移动/改变大小，就取消贴边（但不影响我们自己的动画 setBounds）
+  // 恢复“居中模式下置顶”状态
+  if (windowAlwaysOnTop) mainWindow.setAlwaysOnTop(true, 'floating')
+
+  // 贴边模式下：允许用户移动/改变大小，但保持贴边规则（不再“拖动就退出贴边”）
   mainWindow.on('move', () => {
     if (!mainWindow) return
     if (!dockMode) return
     if (dockInternalOps > 0) return
-    cancelDockingDueToUserMove(mainWindow)
+    handleMoveWhileDocked(mainWindow)
   })
   mainWindow.on('resize', () => {
     if (!mainWindow) return
     if (!dockMode) return
     if (dockInternalOps > 0) return
-    cancelDockingDueToUserMove(mainWindow)
+    // 修改窗体大小不退出靠边模式：同步高度/位置，并强制回贴边宽度
+    handleResizeWhileDocked(mainWindow)
+  })
+
+  // 非钉住贴边模式：当窗口失去焦点（blur）就触发回收
+  mainWindow.on('blur', () => {
+    if (!mainWindow) return
+    if (!dockMode) return
+    if (dockPinned) return
+    if (!dockShown) return
+    dockHideRequestedAt = Date.now()
+
+    // 立即回收：直接切到收缩宽度（避免等待 tick/延迟）
+    const lockedDisplay = getDisplayById(dockDisplayId) ?? getDockDisplay(mainWindow)
+    const targets = calcDockTargets(mainWindow, dockMode, lockedDisplay)
+    dockShown = false
+    setBoundsInternal(
+      mainWindow,
+      {
+        x: Math.round(targets.hidden.x),
+        y: Math.round(targets.hidden.y),
+        width: Math.round(targets.hidden.width),
+        height: Math.round(targets.hidden.height)
+      },
+      false
+    )
+  })
+
+  // 重新获得焦点时：清掉“回收请求”标记（避免后续展开/回收状态机被旧标记影响）
+  mainWindow.on('focus', () => {
+    if (!dockMode) return
+    dockHideRequestedAt = 0
   })
 
   mainWindow.once('ready-to-show', () => {
@@ -665,6 +811,39 @@ app.whenReady().then(async () => {
 
     // left / right
     startDocking(win, mode)
+  })
+
+  ipcMain.handle('window:getDockPinned', async () => {
+    return dockPinned
+  })
+
+  ipcMain.handle('window:setDockPinned', async (_evt, value: boolean) => {
+    // 仅贴边模式可用
+    if (!mainWindow || mainWindow.isDestroyed()) return false
+    if (!dockMode) {
+      dockPinned = false
+      mainWindow.webContents.send('window:dockPinned', false)
+      return false
+    }
+    dockPinned = !!value
+    mainWindow.webContents.send('window:dockPinned', dockPinned)
+    return dockPinned
+  })
+
+  ipcMain.handle('window:getAlwaysOnTop', async () => {
+    return windowAlwaysOnTop
+  })
+
+  ipcMain.handle('window:setAlwaysOnTop', async (_evt, value: boolean) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false
+    windowAlwaysOnTop = !!value
+    // 贴边模式下始终临时置顶；这里只更新“退出贴边后是否保持置顶”的状态
+    if (!dockMode) {
+      if (windowAlwaysOnTop) mainWindow.setAlwaysOnTop(true, 'floating')
+      else mainWindow.setAlwaysOnTop(false)
+    }
+    mainWindow.webContents.send('window:alwaysOnTop', windowAlwaysOnTop)
+    return windowAlwaysOnTop
   })
 
   // ===== Settings =====

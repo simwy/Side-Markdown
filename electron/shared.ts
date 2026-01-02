@@ -60,6 +60,8 @@ export type DockSettings = {
   hideDelayMs: number
   hiddenWidthPx: number
   shownWidthPx: number
+  // 贴边模式下用户调整后的“展开高度”（用于记忆；不一定在设置面板中暴露）
+  shownHeightPx?: number
 }
 
 export type AppSettings = {

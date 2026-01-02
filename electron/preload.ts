@@ -15,6 +15,12 @@ export type ElectronAPI = {
   onWindowMaximized: (handler: (isMaximized: boolean) => void) => () => void
   windowDock: (mode: 'left' | 'center' | 'right') => Promise<void>
   onWindowDockMode: (handler: (mode: 'left' | 'center' | 'right') => void) => () => void
+  windowGetDockPinned: () => Promise<boolean>
+  windowSetDockPinned: (value: boolean) => Promise<boolean>
+  onWindowDockPinned: (handler: (value: boolean) => void) => () => void
+  windowGetAlwaysOnTop: () => Promise<boolean>
+  windowSetAlwaysOnTop: (value: boolean) => Promise<boolean>
+  onWindowAlwaysOnTop: (handler: (value: boolean) => void) => () => void
   getSettings: () => Promise<AppSettings>
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   onSettingsChanged: (handler: (settings: AppSettings) => void) => () => void
@@ -49,6 +55,20 @@ const api: ElectronAPI = {
     const listener = (_evt: Electron.IpcRendererEvent, mode: 'left' | 'center' | 'right') => handler(mode)
     ipcRenderer.on('window:dockMode', listener)
     return () => ipcRenderer.removeListener('window:dockMode', listener)
+  },
+  windowGetDockPinned: () => ipcRenderer.invoke('window:getDockPinned'),
+  windowSetDockPinned: (value) => ipcRenderer.invoke('window:setDockPinned', value),
+  onWindowDockPinned: (handler) => {
+    const listener = (_evt: Electron.IpcRendererEvent, value: boolean) => handler(value)
+    ipcRenderer.on('window:dockPinned', listener)
+    return () => ipcRenderer.removeListener('window:dockPinned', listener)
+  },
+  windowGetAlwaysOnTop: () => ipcRenderer.invoke('window:getAlwaysOnTop'),
+  windowSetAlwaysOnTop: (value) => ipcRenderer.invoke('window:setAlwaysOnTop', value),
+  onWindowAlwaysOnTop: (handler) => {
+    const listener = (_evt: Electron.IpcRendererEvent, value: boolean) => handler(value)
+    ipcRenderer.on('window:alwaysOnTop', listener)
+    return () => ipcRenderer.removeListener('window:alwaysOnTop', listener)
   },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch) => ipcRenderer.invoke('settings:update', patch),
