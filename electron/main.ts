@@ -994,6 +994,14 @@ app.whenReady().then(async () => {
     return await openFilesWithDialog(mainWindow)
   })
 
+  ipcMain.handle('fs:openFilePaths', async (_evt, filePaths: unknown) => {
+    // 只允许 string[]（来自拖拽/系统传入的路径）
+    if (!Array.isArray(filePaths)) return []
+    const safe = filePaths.filter((x): x is string => typeof x === 'string' && x.length > 0)
+    if (safe.length === 0) return []
+    return await openFilePaths(safe)
+  })
+
   ipcMain.handle('fs:saveFile', async (_evt, req: SaveFileRequest) => {
     if (!mainWindow) return null
     return await saveFileWithDialog(mainWindow, req, false)
