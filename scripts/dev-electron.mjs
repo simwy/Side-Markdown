@@ -10,23 +10,41 @@ let child = null
 let restarting = false
 let pending = false
 let debounceTimer = null
+let ignoreChangesUntil = 0
 
 function log(...args) {
   process.stdout.write(`[dev-electron] ${args.join(' ')}\n`)
 }
 
+function getElectronBin() {
+  // 直接启动 Electron 可执行文件（避免 npx/脚本 wrapper 导致杀不干净，从而出现“双实例”）
+  if (process.platform === 'darwin') {
+    return path.join(projectRoot, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+  }
+  if (process.platform === 'win32') {
+    return path.join(projectRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
+  }
+  return path.join(projectRoot, 'node_modules', 'electron', 'dist', 'electron')
+}
+
 function spawnElectron() {
   const env = { ...process.env }
   // 在 dev 模式下由 Vite 提供页面地址（package.json 的 dev 脚本已注入）
-  const cmd = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-  const args = ['--no', 'electron', '.']
+  const cmd = getElectronBin()
+  const args = ['.']
+
+  // 刚启动/重启后，dist-electron 往往还会抖动写入一小段时间；忽略这段时间的 watch 事件，避免连环重启
+  ignoreChangesUntil = Date.now() + 500
 
   log('starting Electron...')
   child = spawn(cmd, args, {
     cwd: projectRoot,
     env,
-    stdio: 'inherit'
+    stdio: 'inherit',
+    // 让子进程成为新的进程组 leader，便于一次性杀掉整棵树（Electron 会派生 helper）
+    detached: process.platform !== 'win32'
   })
+  if (process.platform !== 'win32') child.unref()
 
   child.on('exit', (code, signal) => {
     child = null
@@ -40,7 +58,12 @@ async function stopElectron() {
   return await new Promise((resolve) => {
     const killTimeout = setTimeout(() => {
       try {
-        p.kill('SIGKILL')
+        if (process.platform === 'win32') {
+          spawn('taskkill', ['/pid', String(p.pid), '/T', '/F'], { stdio: 'ignore' })
+        } else {
+          // kill process group
+          process.kill(-p.pid, 'SIGKILL')
+        }
       } catch {}
       resolve()
     }, 1500)
@@ -51,7 +74,12 @@ async function stopElectron() {
     })
 
     try {
-      p.kill('SIGTERM')
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', String(p.pid), '/T', '/F'], { stdio: 'ignore' })
+      } else {
+        // kill process group
+        process.kill(-p.pid, 'SIGTERM')
+      }
     } catch {
       clearTimeout(killTimeout)
       resolve()
@@ -89,6 +117,7 @@ for (const dir of watchDirs) {
       { recursive: true },
       (_eventType, filename) => {
         if (!filename) return
+        if (Date.now() < ignoreChangesUntil) return
         // ignore sourcemaps noise (still fine to restart, but reduces churn)
         if (String(filename).endsWith('.map')) return
         scheduleRestart(`changed: ${filename}`)
