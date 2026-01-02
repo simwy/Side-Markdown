@@ -3,6 +3,7 @@ import type { AppSettings, ExportRequest, ExportResponse, MenuCommand, OpenedFil
 
 export type ElectronAPI = {
   openFiles: () => Promise<OpenedFile[]>
+  openFilePaths: (filePaths: string[]) => Promise<OpenedFile[]>
   saveFile: (req: SaveFileRequest) => Promise<SaveFileResponse | null>
   saveFileAs: (req: SaveFileRequest) => Promise<SaveFileResponse | null>
   exportHtml: (req: ExportRequest) => Promise<ExportResponse | null>
@@ -31,6 +32,7 @@ export type ElectronAPI = {
 
 const api: ElectronAPI = {
   openFiles: () => ipcRenderer.invoke('fs:openFiles'),
+  openFilePaths: (filePaths) => ipcRenderer.invoke('fs:openFilePaths', filePaths),
   saveFile: (req) => ipcRenderer.invoke('fs:saveFile', req),
   saveFileAs: (req) => ipcRenderer.invoke('fs:saveFileAs', req),
   exportHtml: (req) => ipcRenderer.invoke('export:html', req),

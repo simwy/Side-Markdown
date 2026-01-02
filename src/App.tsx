@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EditorView } from '@codemirror/view'
 import { undo, redo, selectAll } from '@codemirror/commands'
 import type { AppSettings, Locale, MenuCommand } from '../electron/shared'
@@ -208,15 +208,17 @@ export function App() {
     addOpenedFiles(opened)
   }
 
-  const addOpenedFiles = (opened: Array<{ path: string; name: string; encoding: DocTab['encoding']; content: string }>) => {
+  const addOpenedFiles = useCallback((opened: Array<{ path?: string; name: string; encoding: DocTab['encoding']; content: string }>) => {
     setTabs((prev) => {
       const next = [...prev]
       let focusId: string | undefined
       for (const f of opened) {
-        const existing = next.find((t) => t.path === f.path)
-        if (existing) {
-          focusId = existing.id
-          continue
+        if (f.path) {
+          const existing = next.find((t) => t.path === f.path)
+          if (existing) {
+            focusId = existing.id
+            continue
+          }
         }
         const tab: DocTab = {
           id: crypto.randomUUID(),
@@ -234,7 +236,104 @@ export function App() {
       if (focusId) setActiveId(focusId)
       return next
     })
-  }
+  }, [])
+
+  useEffect(() => {
+    const isFileDrag = (dt: DataTransfer | null) => {
+      if (!dt) return false
+      // drop 阶段最可靠：只要 files 有内容就一定是文件拖拽
+      if (dt.files && dt.files.length > 0) return true
+      if (dt.types?.includes('Files')) return true
+      // 有些平台/实现里，dragover 时 dt.files 可能还是空的，但 items 已经能判断
+      const items = Array.from(dt.items ?? [])
+      return items.some((it) => it.kind === 'file')
+    }
+
+    const parseFileUrl = (raw: string) => {
+      // 支持拖入诸如 file:///... 的 URI（有些系统/应用会以 uri-list 形式提供）
+      // 参考：RFC 8089 / text/uri-list
+      const s = raw.trim()
+      if (!s) return null
+      if (!s.toLowerCase().startsWith('file://')) return null
+      try {
+        const u = new URL(s)
+        return decodeURIComponent(u.pathname)
+      } catch {
+        return null
+      }
+    }
+
+    const onDragOver = (e: DragEvent) => {
+      const dt = e.dataTransfer
+      // 只有“文件拖入”才阻止默认行为；否则保留编辑器的正常拖拽/粘贴体验
+      if (!isFileDrag(dt)) return
+      e.preventDefault()
+      e.stopPropagation()
+      // 兜底：某些库会在 capture/bubble 注册 drop 处理，强制截断
+      ;(e as unknown as { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.()
+      try {
+        if (dt) dt.dropEffect = 'copy'
+      } catch {
+        // ignore
+      }
+    }
+
+    const onDrop = async (e: DragEvent) => {
+      const dt = e.dataTransfer
+      if (!dt) return
+
+      // 只要是“文件拖拽”，就必须先截断事件，避免编辑器把文件内容插入当前文档
+      // 注意：哪怕我们拿不到 path，也要先拦截；后面用 File API 兜底读取内容并新建 Tab
+      if (isFileDrag(dt)) {
+        e.preventDefault()
+        e.stopPropagation()
+        ;(e as unknown as { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.()
+      }
+
+      const fileList = Array.from(dt.files ?? [])
+      const pathsFromFiles = fileList
+        .map((f) => (f as unknown as { path?: string }).path)
+        .filter((p): p is string => typeof p === 'string' && p.length > 0)
+
+      // 兜底：部分场景会以 text/uri-list 提供
+      const uriList = dt.getData?.('text/uri-list') ?? ''
+      const pathsFromUri = uriList
+        .split('\n')
+        .map((x) => x.trim())
+        .filter((x) => x && !x.startsWith('#'))
+        .map(parseFileUrl)
+        .filter((p): p is string => typeof p === 'string' && p.length > 0)
+
+      const filePaths = [...pathsFromFiles, ...pathsFromUri]
+      // 优先：能拿到真实路径则走主进程（编码识别更准确 & 可保留原路径用于保存）
+      if (filePaths.length > 0) {
+        const opened = await window.electronAPI.openFilePaths(filePaths)
+        if (opened.length === 0) return
+        addOpenedFiles(opened)
+        return
+      }
+
+      // 兜底：某些 sandbox/平台下拿不到 file.path / uri-list，但仍可通过 File API 读取内容
+      if (fileList.length === 0) return
+      const openedFallback = await Promise.all(
+        fileList.map(async (f) => {
+          const content = await f.text()
+          return { name: f.name || 'Untitled', encoding: 'utf8' as const, content }
+        })
+      )
+      addOpenedFiles(openedFallback)
+    }
+
+    // 用 capture 更稳：避免某些控件（如编辑器）先接到 drop 导致页面导航/插入异常
+    window.addEventListener('dragenter', onDragOver, true)
+    window.addEventListener('dragover', onDragOver, true)
+    window.addEventListener('drop', onDrop, true)
+    return () => {
+      window.removeEventListener('dragenter', onDragOver, true)
+      window.removeEventListener('dragover', onDragOver, true)
+      window.removeEventListener('drop', onDrop, true)
+    }
+  }, [addOpenedFiles])
 
   const saveActive = async (forceSaveAs: boolean) => {
     const t = activeTab
