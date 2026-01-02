@@ -16,9 +16,12 @@ export function buildEditorExtensions(args: {
     EditorState.allowMultipleSelections.of(true),
     EditorView.theme({
       '&': {
-        height: '100%'
+        height: '100%',
+        backgroundColor: 'var(--editorBg)',
+        color: 'var(--editorFg)'
       },
       '.cm-scroller': {
+        height: '100%',
         overflow: 'auto'
       },
       '.cm-content': {
@@ -27,6 +30,23 @@ export function buildEditorExtensions(args: {
         fontWeight: 'var(--editorFontWeight)',
         fontStyle: 'var(--editorFontStyle)',
         lineHeight: '1.55'
+      },
+      '.cm-gutters': {
+        backgroundColor: 'var(--editorGutterBg)',
+        color: 'var(--editorGutterFg)',
+        borderRight: '1px solid var(--border)'
+      },
+      '.cm-activeLine': {
+        backgroundColor: 'var(--editorActiveLine)'
+      },
+      '.cm-activeLineGutter': {
+        backgroundColor: 'var(--editorActiveLine)'
+      },
+      '.cm-selectionBackground': {
+        backgroundColor: 'var(--editorSelection)'
+      },
+      '.cm-cursor': {
+        borderLeftColor: 'var(--editorCursor)'
       }
     })
   ]

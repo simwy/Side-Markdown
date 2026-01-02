@@ -17,8 +17,12 @@ export function EditorPane(props: {
 
   return (
     <CodeMirror
+      className="editor-pane"
       value={props.value}
       height="100%"
+      width="100%"
+      theme="none"
+      style={{ height: '100%' }}
       basicSetup={false}
       extensions={extensions}
       onChange={(val) => props.onChange(val)}

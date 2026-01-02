@@ -35,10 +35,6 @@ export type MenuCommand =
   | { type: 'file:quit' }
   | { type: 'edit:undo' }
   | { type: 'edit:redo' }
-  | { type: 'edit:cut' }
-  | { type: 'edit:copy' }
-  | { type: 'edit:paste' }
-  | { type: 'edit:selectAll' }
   | { type: 'edit:find' }
   | { type: 'edit:replace' }
   | { type: 'edit:gotoLine' }

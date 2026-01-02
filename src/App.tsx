@@ -22,7 +22,7 @@ function guessKindFromName(name: string): 'text' | 'markdown' {
 }
 
 function createUntitledName(n: number) {
-  return `Untitled-${n}.txt`
+  return `Untitled-${n}.md`
 }
 
 function applyFontCssVars(font: EditorFont) {
@@ -56,9 +56,16 @@ export function App() {
     {
       id: crypto.randomUUID(),
       name: createUntitledName(1),
-      kind: 'text',
+      kind: 'markdown',
       encoding: 'utf8',
-      content: '',
+      content: `## 标题 1
+### 标题 1.1
+### 标题 1.2
+
+## 标题 2
+### 标题 2.1
+### 标题 2.2
+`,
       dirty: false,
       createdAt: Date.now()
     }
@@ -122,9 +129,16 @@ export function App() {
     const t: DocTab = {
       id: crypto.randomUUID(),
       name: createUntitledName(count),
-      kind: 'text',
+      kind: 'markdown',
       encoding: 'utf8',
-      content: '',
+      content: `## 标题 1
+### 标题 1.1
+### 标题 1.2
+
+## 标题 2
+### 标题 2.1
+### 标题 2.2
+`,
       dirty: false,
       createdAt: Date.now()
     }
@@ -225,18 +239,6 @@ export function App() {
       case 'edit:redo':
         dispatchToEditor((v) => redo(v))
         return
-      case 'edit:selectAll':
-        dispatchToEditor((v) => selectAll(v))
-        return
-      case 'edit:cut':
-        document.execCommand('cut')
-        return
-      case 'edit:copy':
-        document.execCommand('copy')
-        return
-      case 'edit:paste':
-        document.execCommand('paste')
-        return
       case 'edit:find':
         setFindMode('find')
         return
@@ -333,8 +335,6 @@ export function App() {
               </div>
 
               <div className="titlebar-right">
-                {activeTab.kind === 'markdown' ? <MarkdownToolbar view={editorViewRef.current} /> : null}
-
                 <DockButtons mode={dockMode} />
 
                 <TitlebarDropdown
@@ -420,8 +420,6 @@ export function App() {
             </div>
 
             <div className="titlebar-right">
-              {activeTab.kind === 'markdown' ? <MarkdownToolbar view={editorViewRef.current} /> : null}
-
               <button className="btn no-drag" onClick={newTab}>
                 {t(locale, 'new')}
               </button>
@@ -448,32 +446,52 @@ export function App() {
         {activeTab.kind === 'markdown' && previewMode === 'split' ? (
           <div className="split">
             <div className="pane">
-              <EditorPane
-                kind={activeTab.kind}
-                value={activeTab.content}
-                wordWrap={wordWrap}
-                onViewReady={(v) => (editorViewRef.current = v)}
-                onChange={(next) =>
-                  setTabs((prev) => prev.map((x) => (x.id === activeTab.id ? { ...x, content: next, dirty: true } : x)))
-                }
-              />
+              <div className="editor-shell">
+                <div className="editor-side-toolbar">
+                  <MarkdownToolbar view={editorViewRef.current} layout="vertical" variant="icon" />
+                </div>
+                <div className="editor-host">
+                  <EditorPane
+                    kind={activeTab.kind}
+                    value={activeTab.content}
+                    wordWrap={wordWrap}
+                    onViewReady={(v) => (editorViewRef.current = v)}
+                    onChange={(next) =>
+                      setTabs((prev) =>
+                        prev.map((x) => (x.id === activeTab.id ? { ...x, content: next, dirty: true } : x))
+                      )
+                    }
+                  />
+                </div>
+              </div>
             </div>
             <div className="pane preview" dangerouslySetInnerHTML={{ __html: html }} />
           </div>
         ) : showEditor ? (
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <EditorPane
-              kind={activeTab.kind}
-              value={activeTab.content}
-              wordWrap={wordWrap}
-              onViewReady={(v) => (editorViewRef.current = v)}
-              onChange={(next) =>
-                setTabs((prev) => prev.map((x) => (x.id === activeTab.id ? { ...x, content: next, dirty: true } : x)))
-              }
-            />
+          <div className="pane">
+            <div className="editor-shell">
+              {activeTab.kind === 'markdown' ? (
+                <div className="editor-side-toolbar">
+                  <MarkdownToolbar view={editorViewRef.current} layout="vertical" variant="icon" />
+                </div>
+              ) : null}
+              <div className="editor-host">
+                <EditorPane
+                  kind={activeTab.kind}
+                  value={activeTab.content}
+                  wordWrap={wordWrap}
+                  onViewReady={(v) => (editorViewRef.current = v)}
+                  onChange={(next) =>
+                    setTabs((prev) =>
+                      prev.map((x) => (x.id === activeTab.id ? { ...x, content: next, dirty: true } : x))
+                    )
+                  }
+                />
+              </div>
+            </div>
           </div>
         ) : (
-          <div className="preview" style={{ flex: 1 }} dangerouslySetInnerHTML={{ __html: html }} />
+          <div className="pane preview" dangerouslySetInnerHTML={{ __html: html }} />
         )}
       </div>
 
