@@ -12,7 +12,8 @@ export function getDefaultSettings(): AppSettings {
     dock: {
       hideDelayMs: 250,
       hiddenWidthPx: 10,
-      shownWidthPx: 200
+      shownWidthPx: 200,
+      shownHeightPx: undefined
     }
   }
 }
@@ -47,7 +48,8 @@ export function mergeSettings(base: AppSettings, patch: Partial<AppSettings>): A
     dock: {
       hideDelayMs: patch.dock?.hideDelayMs ?? base.dock.hideDelayMs,
       hiddenWidthPx: patch.dock?.hiddenWidthPx ?? base.dock.hiddenWidthPx,
-      shownWidthPx: patch.dock?.shownWidthPx ?? base.dock.shownWidthPx
+      shownWidthPx: patch.dock?.shownWidthPx ?? base.dock.shownWidthPx,
+      shownHeightPx: patch.dock?.shownHeightPx ?? base.dock.shownHeightPx
     }
   }
   return sanitizeSettings(next)
@@ -61,7 +63,9 @@ export function sanitizeSettings(s: AppSettings): AppSettings {
     dock: {
       hideDelayMs: clamp(Number(s.dock.hideDelayMs || 0), 0, 5000),
       hiddenWidthPx: clamp(Number(s.dock.hiddenWidthPx || 0), 6, 200),
-      shownWidthPx: clamp(Number(s.dock.shownWidthPx || 0), 60, 2000)
+      shownWidthPx: clamp(Number(s.dock.shownWidthPx || 0), 60, 2000),
+      shownHeightPx:
+        s.dock.shownHeightPx == null ? undefined : clamp(Number(s.dock.shownHeightPx || 0), 200, 5000)
     }
   }
 }

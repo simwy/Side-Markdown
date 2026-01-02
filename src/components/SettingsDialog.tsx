@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import type { AppSettings, Locale, ThemeMode } from '../../electron/shared'
 import { t } from '../i18n'
 import { Modal } from './Modal'
@@ -20,6 +20,11 @@ export function SettingsDialog(props: {
   const [shownWidthPx, setShownWidthPx] = useState<number>(props.settings.dock.shownWidthPx)
 
   const localeForLabels = useMemo(() => lang, [lang])
+
+  // 贴边模式下用户拖拽调整宽度会实时写回 settings，这里同步刷新输入框显示
+  useEffect(() => {
+    setShownWidthPx(props.settings.dock.shownWidthPx)
+  }, [props.settings.dock.shownWidthPx])
 
   return (
     <Modal title={t(localeForLabels, 'settings.title')} onClose={props.onClose}>

@@ -5,6 +5,7 @@ export type I18nKey =
   | 'open'
   | 'save'
   | 'menu'
+  | 'quit'
   | 'settings'
   | 'settings.title'
   | 'settings.theme'
@@ -29,6 +30,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     open: '打开',
     save: '保存',
     menu: '菜单',
+    quit: '退出',
     settings: '设置',
     'settings.title': '设置',
     'settings.theme': '界面模式',
@@ -52,6 +54,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     open: '打開',
     save: '儲存',
     menu: '選單',
+    quit: '退出',
     settings: '設定',
     'settings.title': '設定',
     'settings.theme': '介面模式',
@@ -75,6 +78,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     open: 'Open',
     save: 'Save',
     menu: 'Menu',
+    quit: 'Quit',
     settings: 'Settings',
     'settings.title': 'Settings',
     'settings.theme': 'Theme',
@@ -98,6 +102,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     open: '開く',
     save: '保存',
     menu: 'メニュー',
+    quit: '終了',
     settings: '設定',
     'settings.title': '設定',
     'settings.theme': 'テーマ',
@@ -121,6 +126,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     open: '열기',
     save: '저장',
     menu: '메뉴',
+    quit: '종료',
     settings: '설정',
     'settings.title': '설정',
     'settings.theme': '테마',
