@@ -22,6 +22,14 @@ const DOCK_EDGE_TRIGGER_PX = 2
 // 贴边逻辑 tick：用于检测 hover / blur / delay
 const DOCK_TICK_MS = 10
 
+// ===== Single instance guard =====
+// dev 模式下如果启动器/重启脚本出现抖动，可能会短时间拉起第二个进程；这里兜底避免“双实例”
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+  process.exit(0)
+}
+
 function getPreloadPath() {
   // tsup 输出到 dist-electron/preload.cjs
   return path.join(app.getAppPath(), 'dist-electron', 'preload.cjs')
@@ -940,6 +948,14 @@ async function createMainWindow() {
 }
 
 app.setName(APP_TITLE)
+
+// 第二个实例启动时，把焦点拉回第一个实例
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+})
 
 app.on('window-all-closed', () => {
   // macOS 常规行为：关闭所有窗口不退出

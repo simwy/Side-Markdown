@@ -99,6 +99,33 @@ export function App() {
 
   const activeTab = useMemo(() => tabs.find((t) => t.id === activeId) ?? tabs[0]!, [tabs, activeId])
   const editorViewRef = useRef<EditorView | null>(null)
+  const tabsRefCenter = useRef<HTMLDivElement | null>(null)
+  const tabsRefDocked = useRef<HTMLDivElement | null>(null)
+
+  const activeIndex = useMemo(() => {
+    const idx = tabs.findIndex((t) => t.id === activeId)
+    return idx >= 0 ? idx : 0
+  }, [tabs, activeId])
+  const canGoPrevTab = tabs.length > 0 && activeIndex > 0
+  const canGoNextTab = tabs.length > 0 && activeIndex < tabs.length - 1
+  const goPrevTab = () => {
+    if (!canGoPrevTab) return
+    setActiveId(tabs[activeIndex - 1]!.id)
+  }
+  const goNextTab = () => {
+    if (!canGoNextTab) return
+    setActiveId(tabs[activeIndex + 1]!.id)
+  }
+
+  useEffect(() => {
+    // 切换 tab 时：让当前活跃 tab 自动滚动到可见区域（不显示滚动条，但仍可滚动）
+    const root = dockMode === 'center' ? tabsRefCenter.current : tabsRefDocked.current
+    if (!root) return
+    const el = root.querySelector(`[data-tab-id="${activeId}"]`) as HTMLElement | null
+    if (!el) return
+    // 使用最近滚动容器，避免影响其它区域
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+  }, [activeId, tabs.length, dockMode])
 
   useEffect(() => {
     applyFontCssVars(font)
@@ -435,10 +462,10 @@ export function App() {
               <div className="titlebar-left">
                 {/* 贴边模式下隐藏窗口控制按钮（最小化/最大化/关闭） */}
                 <div className="nav-buttons no-drag" aria-label="Navigation">
-                  <button className="icon-btn" title="Back" disabled>
+                  <button className="icon-btn" title="Back" disabled={!canGoPrevTab} onClick={goPrevTab}>
                     ‹
                   </button>
-                  <button className="icon-btn" title="Forward" disabled>
+                  <button className="icon-btn" title="Forward" disabled={!canGoNextTab} onClick={goNextTab}>
                     ›
                   </button>
                 </div>
@@ -471,11 +498,12 @@ export function App() {
             </div>
 
             <div className="titlebar-row row2">
-              <div className="tabs tabs-row2">
+              <div className="tabs tabs-row2" ref={tabsRefDocked}>
                 {tabs.map((t) => (
                   <div
                     key={t.id}
                     className={`tab ${t.id === activeId ? 'active' : ''}`}
+                    data-tab-id={t.id}
                     onMouseDown={() => setActiveId(t.id)}
                     role="button"
                     tabIndex={0}
@@ -502,21 +530,22 @@ export function App() {
             <div className="titlebar-left">
               {isMac ? <WindowControls /> : null}
               <div className="nav-buttons no-drag" aria-label="Navigation">
-                <button className="icon-btn" title="Back" disabled>
+                <button className="icon-btn" title="Back" disabled={!canGoPrevTab} onClick={goPrevTab}>
                   ‹
                 </button>
-                <button className="icon-btn" title="Forward" disabled>
+                <button className="icon-btn" title="Forward" disabled={!canGoNextTab} onClick={goNextTab}>
                   ›
                 </button>
               </div>
             </div>
 
             <div className="titlebar-center">
-              <div className="tabs">
+              <div className="tabs" ref={tabsRefCenter}>
                 {tabs.map((t) => (
                   <div
                     key={t.id}
                     className={`tab ${t.id === activeId ? 'active' : ''}`}
+                    data-tab-id={t.id}
                     onMouseDown={() => setActiveId(t.id)}
                     role="button"
                     tabIndex={0}

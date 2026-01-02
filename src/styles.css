@@ -174,7 +174,8 @@ body {
   flex: 1;
   min-width: 0;
   display: flex;
-  justify-content: center;
+  /* tabs 从左侧开始排列（非居中） */
+  justify-content: flex-start;
 }
 
 .nav-buttons {
@@ -206,17 +207,26 @@ body {
 
 .tabs {
   display: flex;
-  gap: 6px;
-  overflow: auto;
-  flex: 0 1 auto;
-  max-width: min(720px, 56vw);
+  gap: 4px;
+  /* 尽量占满标题栏剩余空间 */
+  flex: 1 1 auto;
+  max-width: 100%;
+  /* 允许横向滚动，但隐藏滚动条 */
+  overflow-x: auto;
+  overflow-y: hidden;
   -webkit-app-region: drag;
+  scrollbar-width: none; /* Firefox */
+}
+
+.tabs::-webkit-scrollbar {
+  height: 0; /* Chromium/Electron: 隐藏横向滚动条 */
 }
 
 .tabs.tabs-row2 {
   max-width: 100%;
   flex: 1;
-  justify-content: center;
+  /* 贴边模式：tab 也从左侧开始排列 */
+  justify-content: flex-start;
 }
 
 .no-drag,
@@ -232,16 +242,18 @@ body {
 .tab {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 6px;
+  padding: 4px 8px;
   background: var(--tab);
   border: 1px solid var(--border);
   border-bottom-color: var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   color: var(--fg);
   cursor: default;
   user-select: none;
   white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .tab.active {
@@ -250,8 +262,8 @@ body {
 }
 
 .tab .dirty {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: var(--accent);
   opacity: 0.85;
@@ -264,7 +276,7 @@ body {
   color: var(--muted);
   cursor: pointer;
   padding: 0 2px;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
 }
 
