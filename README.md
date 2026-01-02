@@ -59,6 +59,20 @@ Artifacts will be in `release/` (NSIS installer + portable exe).
 - **Build on the target OS**: build macOS apps on macOS, Windows apps on Windows (toolchains/signing/system components differ).
 - This project ships **without code signing** by default (`dmg.sign=false`). For production releases, add certificates and signing.
 
+### Screenshots
+
+**Preview**
+
+![Preview](docs/images/preview_1.jpg)
+
+**Dark mode**
+
+![Dark mode](docs/images/preview_2.jpg)
+
+**Docked mode**
+
+![Docked mode](docs/images/preview_3.jpg)
+
 ### Features
 
 - **File**: New / Open (multi-select) / Save / Save As / Close Tab / Quit

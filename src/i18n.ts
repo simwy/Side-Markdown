@@ -26,6 +26,11 @@ export type I18nKey =
   | 'settings.dockDelay'
   | 'settings.hiddenWidth'
   | 'settings.shownWidth'
+  | 'noFile.title'
+  | 'noFile.desc'
+  | 'noFile.prompt'
+  | 'noFile.action.openFile'
+  | 'noFile.action.newFile'
   | 'cancel'
   | 'apply'
   | 'md.heading'
@@ -70,6 +75,11 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': '靠边回收延迟（ms）',
     'settings.hiddenWidth': '靠边收缩宽度（px）',
     'settings.shownWidth': '靠边展开宽度（px）',
+    'noFile.title': '当前没有打开的文件',
+    'noFile.desc': '点击这里选择「新建文件」或「打开文件」',
+    'noFile.prompt': '请选择接下来要做什么：',
+    'noFile.action.openFile': '打开文件',
+    'noFile.action.newFile': '新建文件',
     cancel: '取消',
     apply: '应用',
     'md.heading': '标题（#）',
@@ -113,6 +123,11 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': '靠邊回收延遲（ms）',
     'settings.hiddenWidth': '靠邊收縮寬度（px）',
     'settings.shownWidth': '靠邊展開寬度（px）',
+    'noFile.title': '目前沒有開啟的檔案',
+    'noFile.desc': '點擊這裡選擇「新增檔案」或「開啟檔案」',
+    'noFile.prompt': '請選擇接下來要做什麼：',
+    'noFile.action.openFile': '開啟檔案',
+    'noFile.action.newFile': '新增檔案',
     cancel: '取消',
     apply: '套用',
     'md.heading': '標題（#）',
@@ -156,6 +171,11 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': 'Auto-hide delay (ms)',
     'settings.hiddenWidth': 'Collapsed width (px)',
     'settings.shownWidth': 'Expanded width (px)',
+    'noFile.title': 'No file is currently open',
+    'noFile.desc': 'Click here to choose “New File” or “Open File”',
+    'noFile.prompt': 'What would you like to do next?',
+    'noFile.action.openFile': 'Open File',
+    'noFile.action.newFile': 'New File',
     cancel: 'Cancel',
     apply: 'Apply',
     'md.heading': 'Heading (#)',
@@ -199,6 +219,11 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': '自動収納の遅延（ms）',
     'settings.hiddenWidth': '収納幅（px）',
     'settings.shownWidth': '展開幅（px）',
+    'noFile.title': '開いているファイルはありません',
+    'noFile.desc': 'クリックして「新規ファイル」または「ファイルを開く」を選択',
+    'noFile.prompt': '次に行う操作を選択してください：',
+    'noFile.action.openFile': 'ファイルを開く',
+    'noFile.action.newFile': '新規ファイル',
     cancel: 'キャンセル',
     apply: '適用',
     'md.heading': '見出し（#）',
@@ -242,6 +267,11 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': '자동 숨김 지연(ms)',
     'settings.hiddenWidth': '접힘 너비(px)',
     'settings.shownWidth': '펼침 너비(px)',
+    'noFile.title': '열려 있는 파일이 없습니다',
+    'noFile.desc': '여기를 클릭하여 “새 파일” 또는 “파일 열기”를 선택하세요',
+    'noFile.prompt': '다음에 무엇을 하시겠습니까?',
+    'noFile.action.openFile': '파일 열기',
+    'noFile.action.newFile': '새 파일',
     cancel: '취소',
     apply: '적용',
     'md.heading': '제목(#)',

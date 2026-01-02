@@ -12,10 +12,13 @@
     "build": "vite build && tsup",
     "lint": "echo \"(optional) add eslint later\"",
     "start": "electron .",
+    "icon:mac": "bash scripts/make-mac-icns.sh",
     "dist": "npm run build && electron-builder",
     "dist:dir": "npm run build && electron-builder --dir",
     "dist:win": "npm run build && electron-builder --win",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:mac:intel": "npm run build && electron-builder --mac --x64",
+    "dist:mac:apple": "npm run build && electron-builder --mac --arm64 -c.electronDist=node_modules/electron/dist"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.1",
@@ -50,6 +53,18 @@
     "appId": "com.sim4next.sim4sideMarkdown",
     "productName": "Sim4SideMarkdown",
     "asar": true,
+    "fileAssociations": [
+      {
+        "ext": [
+          "md",
+          "markdown",
+          "txt"
+        ],
+        "name": "Markdown/Text",
+        "description": "Markdown and text document",
+        "role": "Editor"
+      }
+    ],
     "directories": {
       "output": "release"
     },
@@ -60,6 +75,8 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "icon": "build/icon.icns",
       "target": [
         {
           "target": "dmg",
@@ -68,7 +85,13 @@
             "x64"
           ]
         },
-        "zip"
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ]
     },
     "dmg": {

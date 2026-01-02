@@ -96,9 +96,11 @@ export function App() {
   const [showFontDialog, setShowFontDialog] = useState(false)
   const [showGoto, setShowGoto] = useState(false)
   const [findMode, setFindMode] = useState<null | 'find' | 'replace'>(null)
+  const [showNoFileDialog, setShowNoFileDialog] = useState(false)
 
-  const activeTab = useMemo(() => tabs.find((t) => t.id === activeId) ?? tabs[0]!, [tabs, activeId])
+  const activeTab = useMemo(() => tabs.find((t) => t.id === activeId) ?? tabs[0], [tabs, activeId])
   const editorViewRef = useRef<EditorView | null>(null)
+  const saveSessionTimerRef = useRef<number | null>(null)
 
   const activeIndex = useMemo(() => {
     const idx = tabs.findIndex((t) => t.id === activeId)
@@ -164,16 +166,19 @@ export function App() {
     setTabs(nextTabs)
     if (nextActiveId) setActiveId(nextActiveId)
     else if (nextTabs.length > 0 && !nextTabs.some((t) => t.id === activeId)) setActiveId(nextTabs[0]!.id)
+    else if (nextTabs.length === 0) setActiveId('')
   }
 
   const newTab = () => {
-    const count = tabs.filter((t) => t.name.startsWith('Untitled-')).length + 1
-    const t: DocTab = {
-      id: crypto.randomUUID(),
-      name: createUntitledName(count),
-      kind: 'markdown',
-      encoding: 'utf8',
-      content: `##  1.title
+    const id = crypto.randomUUID()
+    setTabs((prev) => {
+      const count = prev.filter((t) => t.name.startsWith('Untitled-')).length + 1
+      const t: DocTab = {
+        id,
+        name: createUntitledName(count),
+        kind: 'markdown',
+        encoding: 'utf8',
+        content: `##  1.title
 ###  1.1.title
 ###  1.2.title
 
@@ -181,10 +186,12 @@ export function App() {
 ###  2.1.title
 ###  2.2.title
 `,
-      dirty: false,
-      createdAt: Date.now()
-    }
-    ensureActive([t, ...tabs], t.id)
+        dirty: false,
+        createdAt: Date.now()
+      }
+      return [t, ...prev]
+    })
+    setActiveId(id)
   }
 
   const closeTab = (id: string) => {
@@ -195,11 +202,10 @@ export function App() {
       if (!ok) return
     }
     const next = tabs.filter((x) => x.id !== id)
-    ensureActive(next, next[0]?.id)
-    if (next.length === 0) {
-      // 至少保留一个空白文档，体验更贴近记事本
-      newTab()
-    }
+    // 只在关闭“当前激活 tab”时才切换激活项；否则保持原激活（如果仍存在）
+    const nextActiveId =
+      id === activeId ? next[0]?.id : next.some((x) => x.id === activeId) ? activeId : next[0]?.id
+    ensureActive(next, nextActiveId)
   }
 
   const openFiles = async () => {
@@ -336,6 +342,10 @@ export function App() {
   }, [addOpenedFiles])
 
   const saveActive = async (forceSaveAs: boolean) => {
+    if (!activeTab) {
+      setShowNoFileDialog(true)
+      return
+    }
     const t = activeTab
     const req = { path: t.path, nameHint: t.name, content: t.content, encoding: t.encoding }
     const res = forceSaveAs ? await window.electronAPI.saveFileAs(req) : await window.electronAPI.saveFile(req)
@@ -348,17 +358,23 @@ export function App() {
   }
 
   const html = useMemo(() => {
+    if (!activeTab) return ''
     if (activeTab.kind !== 'markdown') return ''
     return renderMarkdownToSafeHtml(activeTab.content)
-  }, [activeTab.kind, activeTab.content])
+  }, [activeTab?.kind, activeTab?.content])
 
   const exportBodyHtml = useMemo(() => {
+    if (!activeTab) return ''
     if (activeTab.kind === 'markdown') return html
     // text：用 <pre> 保留换行
     return `<pre>${escapeHtmlText(activeTab.content)}</pre>`
-  }, [activeTab.kind, activeTab.content, html])
+  }, [activeTab?.kind, activeTab?.content, html])
 
   const exportAs = async (format: 'html' | 'pdf' | 'word') => {
+    if (!activeTab) {
+      setShowNoFileDialog(true)
+      return
+    }
     const req = { title: activeTab.name, nameHint: activeTab.name, html: exportBodyHtml }
     if (format === 'html') await window.electronAPI.exportHtml(req)
     if (format === 'pdf') await window.electronAPI.exportPdf(req)
@@ -396,6 +412,7 @@ export function App() {
         void exportAs('word')
         return
       case 'file:closeTab':
+        if (!activeTab) return
         closeTab(activeTab.id)
         return
       case 'file:quit':
@@ -435,6 +452,7 @@ export function App() {
         setPreviewMode((m) => (m === 'split' ? 'edit' : m === 'edit' ? 'preview' : 'split'))
         return
       case 'encoding:set':
+        if (!activeTab) return
         setTabs((prev) => prev.map((x) => (x.id === activeTab.id ? { ...x, encoding: cmd.encoding } : x)))
         return
       case 'window:toggleMaximize':
@@ -460,17 +478,68 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // ===== Session restore: reopen previously opened files on startup =====
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const s = await window.electronAPI.sessionLoad()
+      if (cancelled) return
+      const paths = Array.from(s.openFilePaths ?? []).filter((p): p is string => typeof p === 'string' && p.length > 0)
+      if (paths.length === 0) return
+
+      // 去重，保序
+      const seen = new Set<string>()
+      const uniq: string[] = []
+      for (const p of paths) {
+        if (seen.has(p)) continue
+        seen.add(p)
+        uniq.push(p)
+      }
+
+      // 恢复激活文件：让它在最后打开（addOpenedFiles 会 focus 最后一个）
+      const active = s.activeFilePath
+      const ordered = active && uniq.includes(active) ? [...uniq.filter((p) => p !== active), active] : uniq
+
+      const opened = await window.electronAPI.openFilePaths(ordered, { quiet: true })
+      if (cancelled) return
+      if (opened.length === 0) return
+      addOpenedFiles(opened)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [addOpenedFiles])
+
+  // ===== Session save: persist currently opened file list =====
+  useEffect(() => {
+    if (saveSessionTimerRef.current) window.clearTimeout(saveSessionTimerRef.current)
+    // 轻微防抖：避免输入时每个字符都写一次
+    saveSessionTimerRef.current = window.setTimeout(() => {
+      saveSessionTimerRef.current = null
+      const openFilePaths = tabs
+        .map((t) => t.path)
+        .filter((p): p is string => typeof p === 'string' && p.length > 0)
+      const activeFilePath =
+        typeof activeTab?.path === 'string' && activeTab.path.length > 0 ? activeTab.path : undefined
+      void window.electronAPI.sessionSave({ openFilePaths, activeFilePath })
+    }, 250)
+    return () => {
+      if (saveSessionTimerRef.current) window.clearTimeout(saveSessionTimerRef.current)
+    }
+  }, [tabs, activeTab?.path])
+
   const selectionInfo = useMemo(() => {
+    if (!activeTab) return { line: 1, col: 1, lines: 1 }
     const view = editorViewRef.current
     if (!view) return { line: 1, col: 1, lines: 1 }
     const pos = view.state.selection.main.head
     const line = view.state.doc.lineAt(pos)
     return { line: line.number, col: pos - line.from + 1, lines: view.state.doc.lines }
-  }, [activeTab.content])
+  }, [activeTab?.content])
 
-  const isMarkdown = activeTab.kind === 'markdown'
-  const editorVisible = !isMarkdown || previewMode === 'edit' || previewMode === 'split'
-  const previewVisible = isMarkdown && (previewMode === 'preview' || previewMode === 'split')
+  const isMarkdown = activeTab?.kind === 'markdown'
+  const editorVisible = !!activeTab && (!isMarkdown || previewMode === 'edit' || previewMode === 'split')
+  const previewVisible = !!activeTab && !!isMarkdown && (previewMode === 'preview' || previewMode === 'split')
 
   const applyPreviewMode = (nextEditor: boolean, nextPreview: boolean) => {
     // 防止全关导致空白：至少保留一个面板
@@ -681,7 +750,22 @@ export function App() {
       </div>
 
       <div className="content">
-        {dockMode === 'center' ? (
+        {!activeTab ? (
+          <div
+            className="empty-state"
+            role="button"
+            tabIndex={0}
+            onMouseDown={() => setShowNoFileDialog(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') setShowNoFileDialog(true)
+            }}
+          >
+            <div className="empty-state-card">
+              <div className="empty-state-title">{t(locale, 'noFile.title')}</div>
+              <div className="empty-state-desc">{t(locale, 'noFile.desc')}</div>
+            </div>
+          </div>
+        ) : dockMode === 'center' ? (
           <>
             <PanelToggleButtons
               kind={activeTab.kind}
@@ -707,15 +791,30 @@ export function App() {
 
               if (isMarkdown && showToc) {
                 panes.push(
-                  <div key="toc" className="pane">
-                    <TocPane markdown={activeTab.content} onJump={jumpToHeading} />
+                  <div key="toc" className="pane readonly" data-pane="toc">
+                    <div className="pane-header">
+                      <div className="pane-title">目录</div>
+                      <div className="pane-badges">
+                        <span className="pane-badge readonly" title="该区域不可编辑，可点击跳转">只读</span>
+                      </div>
+                    </div>
+                    <div className="pane-body">
+                      <TocPane markdown={activeTab.content} onJump={jumpToHeading} showHeader={false} />
+                    </div>
                   </div>
                 )
               }
 
               if (editorVisible) {
                 panes.push(
-                  <div key="editor" className="pane">
+                  <div key="editor" className="pane editable" data-pane="editor">
+                    <div className="pane-header">
+                      <div className="pane-title">编辑器</div>
+                      <div className="pane-badges">
+                        <span className="pane-badge editable" title="该区域可编辑">可编辑</span>
+                      </div>
+                    </div>
+                    <div className="pane-body">
                     <div className="editor-shell">
                       {isMarkdown ? (
                         <div className="editor-side-toolbar">
@@ -736,13 +835,24 @@ export function App() {
                         />
                       </div>
                     </div>
+                    </div>
                   </div>
                 )
               }
 
               if (previewVisible) {
                 panes.push(
-                  <div key="preview" className="pane preview preview-pane" dangerouslySetInnerHTML={{ __html: html }} />
+                  <div key="preview" className="pane readonly" data-pane="preview">
+                    <div className="pane-header">
+                      <div className="pane-title">预览</div>
+                      <div className="pane-badges">
+                        <span className="pane-badge readonly" title="该区域不可编辑（用于阅读预览）">只读</span>
+                      </div>
+                    </div>
+                    <div className="pane-body">
+                      <div className="preview preview-pane" dangerouslySetInnerHTML={{ __html: html }} />
+                    </div>
+                  </div>
                 )
               }
 
@@ -793,14 +903,54 @@ export function App() {
           </div>
           <div className="kvs">
             <span className="kv">
-              <b>Encoding</b> {activeTab.encoding}
+              <b>Encoding</b> {activeTab?.encoding ?? '-'}
             </span>
             <span className="kv">
               <b>Wrap</b> {wordWrap ? 'On' : 'Off'}
             </span>
             <span className="kv">
-              <b>Mode</b> {activeTab.kind === 'markdown' ? previewMode : 'text'}
+              <b>Mode</b> {activeTab ? (activeTab.kind === 'markdown' ? previewMode : 'text') : '-'}
             </span>
+          </div>
+        </div>
+      ) : null}
+
+      {showNoFileDialog ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowNoFileDialog(false)
+          }}
+        >
+          <div className="modal" role="dialog" aria-modal="true" aria-label={t(locale, 'noFile.title')}>
+            <h3>{t(locale, 'noFile.title')}</h3>
+            <div style={{ color: 'var(--muted)', fontSize: 12, lineHeight: 1.6 }}>
+              {t(locale, 'noFile.prompt')}
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setShowNoFileDialog(false)}>
+                {t(locale, 'cancel')}
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  setShowNoFileDialog(false)
+                  void openFiles()
+                }}
+              >
+                {t(locale, 'noFile.action.openFile')}
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  setShowNoFileDialog(false)
+                  newTab()
+                }}
+              >
+                {t(locale, 'noFile.action.newFile')}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

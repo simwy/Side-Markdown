@@ -525,6 +525,43 @@ body {
   position: relative;
 }
 
+.empty-state {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  user-select: none;
+}
+
+.empty-state:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent), transparent 60%);
+  outline-offset: -2px;
+}
+
+.empty-state-card {
+  width: min(520px, 100%);
+  border: 1px dashed color-mix(in oklab, var(--border), var(--accent) 18%);
+  background: color-mix(in oklab, var(--tabActive), var(--accent) 6%);
+  border-radius: 16px;
+  padding: 18px 16px;
+  text-align: center;
+}
+
+.empty-state-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+  margin-bottom: 6px;
+}
+
+.empty-state-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .panel-toggle-overlay {
   position: absolute;
   top: 10px;
@@ -554,6 +591,89 @@ body {
 
 .pane:last-child {
   border-right: none;
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--tab), var(--bg) 78%);
+  user-select: none;
+}
+
+.pane-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg);
+  opacity: 0.92;
+}
+
+.pane-badges {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pane-badge {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--tabActive);
+  color: var(--muted);
+}
+
+.pane-badge.editable {
+  border-color: color-mix(in oklab, var(--border), var(--accent) 40%);
+  background: color-mix(in oklab, var(--tabActive), var(--accent) 12%);
+  color: var(--fg);
+}
+
+.pane-badge.readonly {
+  opacity: 0.9;
+}
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 只读区域：用轻微底色暗示“不可输入”，但保持可选中/可滚动 */
+.pane.readonly {
+  background: color-mix(in oklab, var(--tab), var(--bg) 86%);
+}
+
+.pane.readonly .preview-pane,
+.pane.readonly .toc-pane {
+  cursor: default;
+}
+
+.pane.readonly .preview-pane * {
+  cursor: inherit;
+}
+
+/* hover 暗示：可编辑区更“可输入”，只读区更“查看” */
+.pane.editable:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--border), var(--accent) 18%);
+}
+
+.pane.readonly:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--border), var(--fg) 8%);
+}
+
+/* 可编辑区域：更像“白纸”，并在编辑器聚焦时给边框提示 */
+.pane.editable {
+  background: var(--bg);
+}
+
+/* Chromium/Electron 支持 :has，用它做“编辑器聚焦态”高亮 */
+.pane.editable:has(.cm-editor.cm-focused) {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent), var(--border) 40%);
 }
 
 .preview {
