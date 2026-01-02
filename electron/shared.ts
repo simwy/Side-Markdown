@@ -40,6 +40,13 @@ export type ExportResponse = {
   name: string
 }
 
+export type SessionState = {
+  // 仅持久化“有路径”的文件 tab；无路径（未保存）不纳入会话恢复
+  openFilePaths: string[]
+  // 上次激活的文件路径（可选）
+  activeFilePath?: string
+}
+
 export type MenuCommand =
   | { type: 'file:new' }
   | { type: 'file:open' }

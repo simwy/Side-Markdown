@@ -53,12 +53,13 @@ function extractHeadings(md: string): TocItem[] {
 export function TocPane(props: {
   markdown: string
   onJump?: (item: TocItem) => void
+  showHeader?: boolean
 }) {
   const items = useMemo(() => extractHeadings(props.markdown), [props.markdown])
 
   return (
     <div className="toc-pane" aria-label="Markdown 目录">
-      <div className="toc-title">目录</div>
+      {props.showHeader === false ? null : <div className="toc-title">目录</div>}
       {items.length === 0 ? (
         <div className="toc-empty">（未检测到标题）</div>
       ) : (

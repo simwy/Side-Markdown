@@ -11,12 +11,15 @@ import {
   type ExportResponse,
   type MenuCommand,
   type OpenedFile,
+  type SessionState,
   type SaveFileRequest,
   type SaveFileResponse
 } from './shared'
 import { getDefaultSettings, mergeSettings, readSettings, sanitizeSettings, writeSettings } from './settings'
+import { readSession, writeSession } from './session'
 
 const isMac = process.platform === 'darwin'
+const ASSOCIATED_EXTS = new Set(['.md', '.markdown', '.txt'])
 const DOCK_MARGIN_PX = 10
 const DOCK_EDGE_TRIGGER_PX = 2
 // 贴边逻辑 tick：用于检测 hover / blur / delay
@@ -101,7 +104,7 @@ async function openFilesWithDialog(win: BrowserWindow): Promise<OpenedFile[]> {
   return results
 }
 
-async function openFilePaths(filePaths: string[]): Promise<OpenedFile[]> {
+async function openFilePaths(filePaths: string[], opts?: { quiet?: boolean }): Promise<OpenedFile[]> {
   const results: OpenedFile[] = []
   for (const p of filePaths) {
     try {
@@ -117,7 +120,7 @@ async function openFilePaths(filePaths: string[]): Promise<OpenedFile[]> {
       })
     } catch {
       // 这里通常是“文件不存在/无权限/临时文件”，不阻断其它文件
-      dialog.showErrorBox('打开失败', `无法打开文件：${p}`)
+      if (!opts?.quiet) dialog.showErrorBox('打开失败', `无法打开文件：${p}`)
     }
   }
   return results
@@ -672,6 +675,34 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
 
+function normalizeArgPath(raw: string, cwd: string) {
+  const s = String(raw ?? '').trim().replace(/^"+|"+$/g, '')
+  if (!s) return null
+  // Ignore flags like --foo
+  if (s.startsWith('-')) return null
+  // dev server url / file url
+  if (s.startsWith('http://') || s.startsWith('https://') || s.startsWith('file://')) return null
+
+  const p = path.isAbsolute(s) ? s : path.resolve(cwd, s)
+  const ext = path.extname(p).toLowerCase()
+  if (!ASSOCIATED_EXTS.has(ext)) return null
+  return p
+}
+
+async function openAndSendFilePaths(filePaths: string[]) {
+  if (filePaths.length === 0) return
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    pendingOpenFilePaths.push(...filePaths)
+    return
+  }
+  try {
+    const opened = await openFilePaths(filePaths)
+    mainWindow.webContents.send('fs:openedFiles', opened)
+  } catch {
+    // ignore
+  }
+}
+
 function scheduleWriteAppSettings(next: AppSettings) {
   // 防抖：用户拖拽调整尺寸时，会连续触发 resize
   if (dockSettingsWriteTimer) clearTimeout(dockSettingsWriteTimer)
@@ -950,11 +981,18 @@ async function createMainWindow() {
 app.setName(APP_TITLE)
 
 // 第二个实例启动时，把焦点拉回第一个实例
-app.on('second-instance', () => {
+app.on('second-instance', async (_event, commandLine, workingDirectory) => {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
+
+  // Windows/Linux: 双击关联文件时，文件路径会出现在 second-instance 的 commandLine
+  const cwd = typeof workingDirectory === 'string' && workingDirectory.length > 0 ? workingDirectory : process.cwd()
+  const paths = (Array.isArray(commandLine) ? commandLine : [])
+    .map((x) => (typeof x === 'string' ? normalizeArgPath(x, cwd) : null))
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+  await openAndSendFilePaths(paths)
 })
 
 app.on('window-all-closed', () => {
@@ -965,16 +1003,7 @@ app.on('window-all-closed', () => {
 // macOS: Finder “打开方式”/双击关联文件
 app.on('open-file', async (event, filePath) => {
   event.preventDefault()
-  if (mainWindow) {
-    try {
-      const opened = await openFilePaths([filePath])
-      mainWindow.webContents.send('fs:openedFiles', opened)
-    } catch {
-      // ignore
-    }
-  } else {
-    pendingOpenFilePaths.push(filePath)
-  }
+  await openAndSendFilePaths([filePath])
 })
 
 app.on('activate', async () => {
@@ -986,6 +1015,16 @@ app.whenReady().then(async () => {
   appSettings = await readSettings()
   nativeTheme.themeSource = appSettings.theme
 
+  // Windows/Linux: 通过文件关联启动时，文件路径一般在 process.argv
+  // macOS 主要走 open-file 事件，这里不干扰它
+  if (!isMac) {
+    const cwd = process.cwd()
+    const paths = process.argv
+      .map((x) => (typeof x === 'string' ? normalizeArgPath(x, cwd) : null))
+      .filter((p): p is string => typeof p === 'string' && p.length > 0)
+    if (paths.length > 0) pendingOpenFilePaths.push(...paths)
+  }
+
   await createMainWindow()
 
   // ===== IPC =====
@@ -994,12 +1033,21 @@ app.whenReady().then(async () => {
     return await openFilesWithDialog(mainWindow)
   })
 
-  ipcMain.handle('fs:openFilePaths', async (_evt, filePaths: unknown) => {
+  ipcMain.handle('fs:openFilePaths', async (_evt, filePaths: unknown, opts: unknown) => {
     // 只允许 string[]（来自拖拽/系统传入的路径）
     if (!Array.isArray(filePaths)) return []
     const safe = filePaths.filter((x): x is string => typeof x === 'string' && x.length > 0)
     if (safe.length === 0) return []
-    return await openFilePaths(safe)
+    const quiet = !!(opts && typeof opts === 'object' && (opts as { quiet?: unknown }).quiet)
+    return await openFilePaths(safe, { quiet })
+  })
+
+  ipcMain.handle('session:load', async () => {
+    return await readSession()
+  })
+
+  ipcMain.handle('session:save', async (_evt, session: SessionState) => {
+    await writeSession(session)
   })
 
   ipcMain.handle('fs:saveFile', async (_evt, req: SaveFileRequest) => {
