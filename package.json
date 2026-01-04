@@ -55,7 +55,7 @@
   },
   "build": {
     "appId": "com.sim4next.sim4sideMarkdown",
-    "productName": "Sim4SideMarkdown",
+    "productName": "SIde Markdown",
     "asar": true,
     "publish": [
       {

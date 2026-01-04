@@ -1,4 +1,4 @@
-## Sim4SideMarkdown (React + Electron text editor)
+## SIde Markdown (React + Electron text editor)
 
 A desktop text/Markdown editor with **multi tabs**, **live Markdown preview (split view)**, **cross-platform menus & shortcuts**, and **common text encodings** (UTF-8 / UTF-16LE / GBK / GB18030 / ANSI Win-1252). Built and packaged with **electron-builder** for Windows and macOS.
 

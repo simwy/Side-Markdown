@@ -1,4 +1,4 @@
-export const APP_TITLE = 'Sim4SideMarkdown'
+export const APP_TITLE = 'SIde Markdown'
 
 export type EncodingName =
   | 'utf8'
