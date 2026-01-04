@@ -90,4 +90,17 @@ export type AppSettings = {
   dock: DockSettings
 }
 
+export type UpdateState = {
+  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error' | 'unsupported'
+  currentVersion: string
+  availableVersion?: string
+  progress?: {
+    percent?: number
+    transferred?: number
+    total?: number
+    bytesPerSecond?: number
+  }
+  error?: string
+}
+
 

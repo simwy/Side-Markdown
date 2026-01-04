@@ -19,6 +19,9 @@
   --editorActiveLine: color-mix(in oklab, var(--accent), var(--bg) 92%);
   --editorSelection: color-mix(in oklab, var(--accent), var(--bg) 80%);
   --editorCursor: var(--fg);
+
+  /* Focus ring: use "inverted" color (follows theme fg) */
+  --focusRing: color-mix(in oklab, var(--fg), var(--bg) 22%);
 }
 
 :root[data-theme="dark"] {
@@ -350,6 +353,11 @@ body {
   min-height: 0;
 }
 
+/* CodeMirror 默认会在聚焦时加 outline，这里关闭以避免出现“选中框”观感 */
+.editor-host .cm-editor.cm-focused {
+  outline: none;
+}
+
 .dock-group {
   display: inline-flex;
   align-items: center;
@@ -417,6 +425,24 @@ body {
   z-index: 50;
 }
 
+.dropdown-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: color-mix(in oklab, var(--border), transparent 15%);
+}
+
+.dropdown-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+
 .dropdown-menu.submenu {
   top: 0;
   left: calc(100% + 6px);
@@ -443,6 +469,47 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.dropdown-right {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 18px;
+}
+
+.dropdown-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown-right-text {
+  font-size: 11px;
+  color: color-mix(in oklab, var(--muted), var(--fg) 10%);
+  white-space: nowrap;
+}
+
+.dropdown-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--bg), transparent 0%);
+}
+
+.dropdown-item.disabled,
+.dropdown-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.dropdown-item:disabled:hover {
+  background: transparent;
+  border-color: transparent;
 }
 
 .dropdown-caret {
@@ -564,7 +631,8 @@ body {
 
 .panel-toggle-overlay {
   position: absolute;
-  top: 10px;
+  /* 避免遮挡 pane header 的标题（目录/编辑器/预览） */
+  top: 44px;
   right: 10px;
   z-index: 40;
   opacity: 0.96;
@@ -609,6 +677,27 @@ body {
   font-weight: 700;
   color: var(--fg);
   opacity: 0.92;
+}
+
+.pane-title-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pane-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Smaller icon buttons for pane headers (reuse .icon-btn base styles) */
+.pane-icon-btn.icon-btn {
+  width: 22px;
+  height: 20px;
+  border-radius: 8px;
+  font-size: 12px;
 }
 
 .pane-badges {
@@ -671,14 +760,21 @@ body {
   background: var(--bg);
 }
 
-/* Chromium/Electron 支持 :has，用它做“编辑器聚焦态”高亮 */
+/* 编辑器聚焦态：不再绘制整块面板的焦点环（会在左侧形成很长的竖条/选中框观感） */
 .pane.editable:has(.cm-editor.cm-focused) {
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent), var(--border) 40%);
+  box-shadow: none;
 }
 
 .preview {
   padding: 14px 16px;
   overflow: auto;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Editor focus ring: avoid drawing focus ring around entire editor area */
+.editor-host:focus-within {
+  box-shadow: none;
 }
 
 .toc-pane {
@@ -687,8 +783,8 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 10px 8px;
-  gap: 8px;
+  padding: 8px 6px;
+  gap: 6px;
   background: color-mix(in oklab, var(--tab), var(--bg) 86%);
 }
 
@@ -712,9 +808,9 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-right: 6px;
-  padding-bottom: 6px;
+  gap: 2px;
+  padding-right: 4px;
+  padding-bottom: 4px;
   /* 避免滚动条覆盖文字（支持的浏览器会预留 gutter） */
   scrollbar-gutter: stable;
 }
@@ -728,19 +824,39 @@ body {
   text-align: left;
   cursor: pointer;
   font-size: 12px;
-  padding: 6px 10px;
+  padding: 4px 8px;
   /* 作为 flex 子项时允许收缩，否则会出现裁切/溢出异常 */
   width: 100%;
   min-width: 0;
   /* 不在 button 上做裁切，避免滚动条/像素取整导致字形被切掉；裁切交给内部文本 */
   display: flex;
   align-items: flex-start;
+  gap: 4px;
   overflow: visible;
+}
+
+.toc-caret {
+  width: 12px;
+  flex: 0 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.65;
+  transform-origin: 50% 50%;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.toc-caret.collapsed {
+  transform: rotate(-90deg);
+}
+
+.toc-caret.leaf {
+  opacity: 0;
 }
 
 .toc-item-text {
   /* 两行截断放到内部文本上，更稳定 */
-  line-height: 1.25;
+  line-height: 1.2;
   white-space: normal;
   word-break: break-word;
   display: -webkit-box;

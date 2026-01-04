@@ -1,4 +1,6 @@
-import React, { useMemo } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import type { Locale } from '../../electron/shared'
+import { t } from '../i18n'
 
 export type TocItem = {
   depth: number
@@ -7,6 +9,10 @@ export type TocItem = {
   ordinal: number
   // 1-based 行号（用于 Editor 跳转）
   line1: number
+}
+
+type TocNode = TocItem & {
+  children: TocNode[]
 }
 
 function extractHeadings(md: string): TocItem[] {
@@ -50,32 +56,84 @@ function extractHeadings(md: string): TocItem[] {
   return items
 }
 
+function buildTocTree(items: TocItem[]): TocNode[] {
+  const roots: TocNode[] = []
+  const stack: TocNode[] = []
+
+  for (const it of items) {
+    const node: TocNode = { ...it, children: [] }
+
+    // Pop until we find a parent with smaller depth.
+    while (stack.length > 0 && stack[stack.length - 1]!.depth >= node.depth) stack.pop()
+
+    const parent = stack[stack.length - 1]
+    if (parent) parent.children.push(node)
+    else roots.push(node)
+
+    stack.push(node)
+  }
+
+  return roots
+}
+
 export function TocPane(props: {
   markdown: string
+  locale: Locale
   onJump?: (item: TocItem) => void
   showHeader?: boolean
+  // Absolute heading depth cap (1-6). If provided, headings deeper than this won't render.
+  maxDepth?: number
 }) {
   const items = useMemo(() => extractHeadings(props.markdown), [props.markdown])
+  const tree = useMemo(() => buildTocTree(items), [items])
+  const maxDepth = props.maxDepth ?? Number.POSITIVE_INFINITY
+
+  // Track collapsed headings (keyed by stable line number).
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
+  useEffect(() => {
+    // Markdown structure may shift while editing; reset collapse state to avoid mismatches.
+    setCollapsed({})
+  }, [props.markdown])
+
+  const renderNodes: (nodes: TocNode[]) => React.ReactNode[] = (nodes) => {
+    return nodes.flatMap((node) => {
+      if (node.depth > maxDepth) return []
+      const hasChildren = node.children.length > 0
+      const isCollapsed = collapsed[node.line1] === true
+
+      const row = (
+        <button
+          key={node.line1}
+          className="toc-item"
+          style={{ paddingLeft: 10 + (node.depth - 1) * 12 }}
+          title={node.text}
+          aria-expanded={hasChildren ? !isCollapsed : undefined}
+          onClick={() => {
+            if (hasChildren) {
+              setCollapsed((prev) => ({ ...prev, [node.line1]: !isCollapsed }))
+            }
+            props.onJump?.(node)
+          }}
+        >
+          <span className={hasChildren ? `toc-caret${isCollapsed ? ' collapsed' : ''}` : 'toc-caret leaf'} aria-hidden="true">
+            ▾
+          </span>
+          <span className="toc-item-text">{node.text}</span>
+        </button>
+      )
+
+      const kids: React.ReactNode[] = hasChildren && !isCollapsed && node.depth < maxDepth ? renderNodes(node.children) : []
+      return [row, ...kids]
+    })
+  }
 
   return (
-    <div className="toc-pane" aria-label="Markdown 目录">
-      {props.showHeader === false ? null : <div className="toc-title">目录</div>}
+    <div className="toc-pane" aria-label={t(props.locale, 'toc.aria')}>
+      {props.showHeader === false ? null : <div className="toc-title">{t(props.locale, 'pane.toc')}</div>}
       {items.length === 0 ? (
-        <div className="toc-empty">（未检测到标题）</div>
+        <div className="toc-empty">{t(props.locale, 'toc.empty')}</div>
       ) : (
-        <div className="toc-items">
-          {items.map((it, idx) => (
-            <button
-              key={`${it.depth}:${it.text}:${it.ordinal}:${idx}`}
-              className="toc-item"
-              style={{ paddingLeft: 10 + (it.depth - 1) * 12 }}
-              title={it.text}
-              onClick={() => props.onJump?.(it)}
-            >
-              <span className="toc-item-text">{it.text}</span>
-            </button>
-          ))}
-        </div>
+        <div className="toc-items">{renderNodes(tree)}</div>
       )}
     </div>
   )

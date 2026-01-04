@@ -1,7 +1,10 @@
 import React from 'react'
+import type { Locale } from '../../electron/shared'
+import { t } from '../i18n'
 import { IconEditor, IconPreview, IconToc } from './icons/PanelIcons'
 
 export function PanelToggleButtons(props: {
+  locale: Locale
   kind: 'text' | 'markdown'
   tocVisible: boolean
   editorVisible: boolean
@@ -14,11 +17,11 @@ export function PanelToggleButtons(props: {
 
   return (
     <div className="panel-toggle-overlay no-drag" aria-label="Panels">
-      <div className="dock-group" role="group" aria-label="显示/隐藏面板">
+      <div className="dock-group" role="group" aria-label={t(props.locale, 'panelToggle.group')}>
         <button
           className={`seg-btn ${props.tocVisible ? 'active' : ''}`}
-          title="Markdown 目录"
-          aria-label="Markdown 目录"
+          title={t(props.locale, 'panelToggle.toc')}
+          aria-label={t(props.locale, 'panelToggle.toc')}
           aria-pressed={props.tocVisible}
           disabled={!isMarkdown}
           onClick={props.onToggleToc}
@@ -27,8 +30,8 @@ export function PanelToggleButtons(props: {
         </button>
         <button
           className={`seg-btn ${props.editorVisible ? 'active' : ''}`}
-          title="编辑器"
-          aria-label="编辑器"
+          title={t(props.locale, 'panelToggle.editor')}
+          aria-label={t(props.locale, 'panelToggle.editor')}
           aria-pressed={props.editorVisible}
           onClick={props.onToggleEditor}
         >
@@ -36,8 +39,8 @@ export function PanelToggleButtons(props: {
         </button>
         <button
           className={`seg-btn ${props.previewVisible ? 'active' : ''}`}
-          title="预览"
-          aria-label="预览"
+          title={t(props.locale, 'panelToggle.preview')}
+          aria-label={t(props.locale, 'panelToggle.preview')}
           aria-pressed={props.previewVisible}
           disabled={!isMarkdown}
           onClick={props.onTogglePreview}

@@ -29,7 +29,9 @@ export function buildEditorExtensions(args: {
         fontSize: 'var(--editorFontSize)',
         fontWeight: 'var(--editorFontWeight)',
         fontStyle: 'var(--editorFontStyle)',
-        lineHeight: '1.55'
+        lineHeight: '1.55',
+        // Native caret (when not using drawSelection): make it theme-aware.
+        caretColor: 'var(--editorCursor)'
       },
       '.cm-gutters': {
         backgroundColor: 'var(--editorGutterBg)',
@@ -46,6 +48,9 @@ export function buildEditorExtensions(args: {
         backgroundColor: 'var(--editorSelection)'
       },
       '.cm-cursor': {
+        borderLeftColor: 'var(--editorCursor)'
+      },
+      '.cm-dropCursor': {
         borderLeftColor: 'var(--editorCursor)'
       }
     })

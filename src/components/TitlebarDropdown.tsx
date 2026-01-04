@@ -1,9 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 
 export type TitlebarDropdownItem = {
+  kind?: 'item' | 'separator' | 'label'
   label: string
+  rightText?: string
   onClick?: () => void
   children?: TitlebarDropdownItem[]
+  disabled?: boolean
+  badge?: 'dot'
 }
 
 export function TitlebarDropdown(props: {
@@ -70,19 +74,38 @@ export function TitlebarDropdown(props: {
       {open ? (
         <div className="dropdown-menu" role="menu" ref={menuRef}>
           {rootItems.map((it, idx) => {
+            if (it.kind === 'separator') {
+              return <div key={`sep__${idx}`} className="dropdown-sep" role="separator" />
+            }
+            if (it.kind === 'label') {
+              return (
+                <div key={`label__${idx}`} className="dropdown-label" role="presentation">
+                  <span className="dropdown-text">{it.label}</span>
+                  <span className="dropdown-right">
+                    {it.rightText ? <span className="dropdown-right-text">{it.rightText}</span> : null}
+                    {it.badge === 'dot' ? <span className="dropdown-badge-dot" aria-hidden="true" /> : null}
+                  </span>
+                </div>
+              )
+            }
+
             const hasChildren = Array.isArray(it.children) && it.children.length > 0
+            const disabled = !!it.disabled
             const isActive = activeSubmenu?.label === it.label
             return (
               <button
                 key={`${it.label}__${idx}`}
-                className={`dropdown-item ${hasChildren && isActive ? 'active' : ''}`}
+                className={`dropdown-item ${hasChildren && isActive ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
                 role="menuitem"
+                disabled={disabled}
                 onMouseEnter={(e) => {
+                  if (disabled) return
                   // hover 展开子菜单；移到其它项时关闭
                   if (hasChildren) openSubmenuFor(it, e.currentTarget)
                   else setActiveSubmenu(null)
                 }}
                 onClick={(e) => {
+                  if (disabled) return
                   if (hasChildren) {
                     openSubmenuFor(it, e.currentTarget)
                     return
@@ -93,8 +116,12 @@ export function TitlebarDropdown(props: {
                   it.onClick()
                 }}
               >
-                <span>{it.label}</span>
-                {hasChildren ? <span className="dropdown-caret">›</span> : <span />}
+                <span className="dropdown-text">{it.label}</span>
+                <span className="dropdown-right">
+                  {it.rightText ? <span className="dropdown-right-text">{it.rightText}</span> : null}
+                  {it.badge === 'dot' ? <span className="dropdown-badge-dot" aria-hidden="true" /> : null}
+                  {hasChildren ? <span className="dropdown-caret">›</span> : null}
+                </span>
               </button>
             )
           })}
@@ -105,22 +132,44 @@ export function TitlebarDropdown(props: {
               role="menu"
               style={{ top: submenuTopPx }}
             >
-              {submenuItems.map((it, idx) => (
-                <button
-                  key={`${it.label}__sub__${idx}`}
-                  className="dropdown-item"
-                  role="menuitem"
-                  onClick={() => {
-                    if (!it.onClick) return
-                    setOpen(false)
-                    setActiveSubmenu(null)
-                    it.onClick()
-                  }}
-                >
-                  <span>{it.label}</span>
-                  <span />
-                </button>
-              ))}
+              {submenuItems.map((it, idx) => {
+                if (it.kind === 'separator') {
+                  return <div key={`sep__sub__${idx}`} className="dropdown-sep" role="separator" />
+                }
+                if (it.kind === 'label') {
+                  return (
+                    <div key={`label__sub__${idx}`} className="dropdown-label" role="presentation">
+                      <span className="dropdown-text">{it.label}</span>
+                      <span className="dropdown-right">
+                        {it.rightText ? <span className="dropdown-right-text">{it.rightText}</span> : null}
+                        {it.badge === 'dot' ? <span className="dropdown-badge-dot" aria-hidden="true" /> : null}
+                      </span>
+                    </div>
+                  )
+                }
+
+                return (
+                  <button
+                    key={`${it.label}__sub__${idx}`}
+                    className={`dropdown-item ${it.disabled ? 'disabled' : ''}`}
+                    role="menuitem"
+                    disabled={!!it.disabled}
+                    onClick={() => {
+                      if (it.disabled) return
+                      if (!it.onClick) return
+                      setOpen(false)
+                      setActiveSubmenu(null)
+                      it.onClick()
+                    }}
+                  >
+                    <span className="dropdown-text">{it.label}</span>
+                    <span className="dropdown-right">
+                      {it.rightText ? <span className="dropdown-right-text">{it.rightText}</span> : null}
+                      {it.badge === 'dot' ? <span className="dropdown-badge-dot" aria-hidden="true" /> : null}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
           ) : null}
         </div>

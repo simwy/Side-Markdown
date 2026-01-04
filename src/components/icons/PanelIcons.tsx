@@ -52,3 +52,21 @@ export function IconPreview(props: Props) {
   )
 }
 
+
+export function IconChevronLeft(props: Props) {
+  // Material-like chevron left
+  return (
+    <Svg {...props} viewBox="0 0 24 24">
+      <path d="M15.41 16.59 10.83 12l4.58-4.59L14 6l-6 6 6 6z" />
+    </Svg>
+  )
+}
+
+export function IconChevronRight(props: Props) {
+  // Material-like chevron right
+  return (
+    <Svg {...props} viewBox="0 0 24 24">
+      <path d="M8.59 16.59 13.17 12 8.59 7.41 10 6l6 6-6 6z" />
+    </Svg>
+  )
+}

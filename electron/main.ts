@@ -3,17 +3,20 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import chardet from 'chardet'
 import iconv from 'iconv-lite'
+import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import {
   APP_TITLE,
   type AppSettings,
   type EncodingName,
   type ExportRequest,
   type ExportResponse,
+  type Locale,
   type MenuCommand,
   type OpenedFile,
   type SessionState,
   type SaveFileRequest,
-  type SaveFileResponse
+  type SaveFileResponse,
+  type UpdateState
 } from './shared'
 import { getDefaultSettings, mergeSettings, readSettings, sanitizeSettings, writeSettings } from './settings'
 import { readSession, writeSession } from './session'
@@ -46,6 +49,221 @@ function getIndexHtmlPath() {
 function sendMenuCommand(win: BrowserWindow | null, cmd: MenuCommand) {
   if (!win) return
   win.webContents.send('menu:command', cmd)
+}
+
+// ===== Auto update (GitHub Releases via electron-updater) =====
+const GITHUB_OWNER = 'sim4next'
+const GITHUB_REPO = 'Sim4SideMarkdown'
+
+let updateState: UpdateState = {
+  status: 'idle',
+  currentVersion: '0.0.0'
+}
+let updateInstallRequested = false
+
+function versionLabel(locale: Locale) {
+  if (locale === 'en') return 'Version'
+  if (locale === 'ja') return 'バージョン'
+  if (locale === 'ko') return '버전'
+  // zh-CN / zh-TW
+  return '版本'
+}
+
+function isUpdaterEnabled() {
+  // electron-updater 仅在“打包后的应用”中可靠工作；dev 模式禁用
+  return app.isPackaged
+}
+
+function formatError(err: unknown) {
+  if (err instanceof Error) return err.message
+  return typeof err === 'string' ? err : JSON.stringify(err)
+}
+
+function setUpdateState(patch: Partial<UpdateState>) {
+  updateState = { ...updateState, ...patch }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update:state', updateState)
+  }
+  syncUpdateMenuState()
+}
+
+function expectedUpdateMetaFileForPlatform() {
+  if (process.platform === 'darwin') return 'latest-mac.yml'
+  if (process.platform === 'win32') return 'latest.yml'
+  return null
+}
+
+async function preflightGithubReleaseAssets() {
+  const need = expectedUpdateMetaFileForPlatform()
+  if (!need) return { ok: true as const }
+
+  const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+  try {
+    const res = await fetch(apiUrl, {
+      headers: {
+        accept: 'application/vnd.github+json',
+        'user-agent': `${APP_TITLE}/${app.getVersion()}`
+      }
+    })
+    if (!res.ok) {
+      return { ok: false as const, message: `无法访问 GitHub Releases（HTTP ${res.status}）。` }
+    }
+    const data = (await res.json()) as { html_url?: string; assets?: Array<{ name?: string }> }
+    const assets = Array.isArray(data.assets) ? data.assets : []
+    const hasMeta = assets.some((a) => (a?.name ?? '') === need)
+    if (!hasMeta) {
+      const releaseUrl = data.html_url || `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+      return {
+        ok: false as const,
+        message: `最新 Release 缺少更新元数据文件：${need}\n\n请用 electron-builder 发布（上传产物时会自动带上该 yml），或手动把它作为 Release asset 上传。\n\n打开：${releaseUrl}`,
+        openUrl: releaseUrl
+      }
+    }
+    return { ok: true as const }
+  } catch (err) {
+    return { ok: false as const, message: `检查 GitHub Release 资产失败：${formatError(err)}` }
+  }
+}
+
+function getUpdateMenuLabel(locale: Locale = appSettings.locale) {
+  const v = updateState.availableVersion ? ` v${updateState.availableVersion}` : ''
+  const hasDot = updateState.status === 'available' || updateState.status === 'downloaded'
+  const dot = hasDot ? ' ●' : ''
+  // 系统菜单中只展示版本项；当有新版本时在版本号后加红点提示（用 ● 字符）
+  return `${versionLabel(locale)} v${updateState.currentVersion}${dot}${hasDot ? v : ''}`
+}
+
+function syncUpdateMenuState() {
+  const menu = Menu.getApplicationMenu()
+  if (!menu) return
+  const verItem = menu.getMenuItemById('help.version')
+  if (verItem) {
+    verItem.label = getUpdateMenuLabel(appSettings.locale)
+    verItem.enabled = updateState.status !== 'unsupported'
+  }
+}
+
+async function checkForUpdates(opts?: { silent?: boolean }) {
+  if (!isUpdaterEnabled()) {
+    setUpdateState({
+      status: 'unsupported',
+      currentVersion: app.getVersion(),
+      error: 'Auto update is disabled in dev mode.'
+    })
+    return updateState
+  }
+  try {
+    updateInstallRequested = false
+    const pre = await preflightGithubReleaseAssets()
+    if (!pre.ok) {
+      setUpdateState({ status: 'error', error: pre.message })
+      if (!opts?.silent && mainWindow && !mainWindow.isDestroyed()) {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: 'error',
+          title: '检查更新失败',
+          message: '发布资源不完整，无法自动更新。',
+          detail: pre.message,
+          buttons: pre.openUrl ? ['打开 Releases', '确定'] : ['确定'],
+          defaultId: 0,
+          cancelId: pre.openUrl ? 1 : 0
+        })
+        if (pre.openUrl && response === 0) await shell.openExternal(pre.openUrl)
+      }
+      return updateState
+    }
+    await autoUpdater.checkForUpdates()
+  } catch (err) {
+    setUpdateState({ status: 'error', error: formatError(err) })
+    if (!opts?.silent && mainWindow && !mainWindow.isDestroyed()) {
+      void dialog.showMessageBox(mainWindow, { type: 'error', title: '检查更新失败', message: '无法检查更新。', detail: formatError(err) })
+    }
+  }
+  return updateState
+}
+
+async function startUpdate() {
+  if (!isUpdaterEnabled()) {
+    setUpdateState({
+      status: 'unsupported',
+      currentVersion: app.getVersion(),
+      error: 'Auto update is disabled in dev mode.'
+    })
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      void dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: '自动更新不可用',
+        message: '当前为开发模式，自动更新仅在发布版（安装包）中可用。'
+      })
+    }
+    return updateState
+  }
+
+  // 已下载：直接安装
+  if (updateState.status === 'downloaded') {
+    updateInstallRequested = true
+    autoUpdater.quitAndInstall()
+    return updateState
+  }
+
+  // 未发现更新时先检查一次
+  if (updateState.status !== 'available') {
+    await checkForUpdates({ silent: false })
+  }
+
+  // 有更新：下载并在下载完成后自动安装
+  if (updateState.status === 'available') {
+    updateInstallRequested = true
+    try {
+      await autoUpdater.downloadUpdate()
+    } catch (err) {
+      updateInstallRequested = false
+      setUpdateState({ status: 'error', error: formatError(err) })
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        void dialog.showMessageBox(mainWindow, { type: 'error', title: '下载更新失败', message: '无法下载更新。', detail: formatError(err) })
+      }
+    }
+  }
+
+  return updateState
+}
+
+function initAutoUpdater() {
+  setUpdateState({ status: 'idle', currentVersion: app.getVersion(), availableVersion: undefined, error: undefined, progress: undefined })
+  if (!isUpdaterEnabled()) {
+    setUpdateState({
+      status: 'unsupported',
+      currentVersion: app.getVersion(),
+      error: 'Auto update is disabled in dev mode.'
+    })
+    return
+  }
+
+  // 由“用户点击更新”来触发下载；启动时只做检查并提示红点
+  autoUpdater.autoDownload = false
+
+  autoUpdater.on('checking-for-update', () => setUpdateState({ status: 'checking', error: undefined, progress: undefined }))
+  autoUpdater.on('update-available', (info: UpdateInfo) =>
+    setUpdateState({ status: 'available', availableVersion: info.version, error: undefined, progress: undefined })
+  )
+  autoUpdater.on('update-not-available', () => setUpdateState({ status: 'not-available', availableVersion: undefined, error: undefined, progress: undefined }))
+  autoUpdater.on('download-progress', (p: ProgressInfo) =>
+    setUpdateState({
+      status: 'downloading',
+      progress: { percent: p.percent, transferred: p.transferred, total: p.total, bytesPerSecond: p.bytesPerSecond }
+    })
+  )
+  autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+    setUpdateState({ status: 'downloaded', availableVersion: info.version, progress: undefined })
+    if (updateInstallRequested) {
+      autoUpdater.quitAndInstall()
+    }
+  })
+  autoUpdater.on('error', (err) => setUpdateState({ status: 'error', error: formatError(err) }))
+
+  // 启动后后台检查一次（静默）
+  setTimeout(() => {
+    void checkForUpdates({ silent: true })
+  }, 1500)
 }
 
 function mapDetectedToEncodingName(detected?: string): EncodingName {
@@ -374,161 +592,175 @@ async function exportPdfWithDialog(win: BrowserWindow, req: ExportRequest): Prom
 function buildAppMenu(winGetter: () => BrowserWindow | null) {
   const accel = (win: string, mac: string) => (isMac ? mac : win)
 
-  const template: Electron.MenuItemConstructorOptions[] = [
-    ...(isMac
-      ? [
-          {
-            label: APP_TITLE,
-            submenu: [
-              { role: 'about' },
-              { type: 'separator' },
-              { role: 'services' },
-              { type: 'separator' },
-              { role: 'hide' },
-              { role: 'hideOthers' },
-              { role: 'unhide' },
-              { type: 'separator' },
-              {
-                label: '退出',
-                accelerator: 'Cmd+Q',
-                click: () => app.quit()
-              }
-            ]
-          }
-        ]
-      : []),
-    {
-      label: '文件',
+  const template: Electron.MenuItemConstructorOptions[] = []
+
+  if (isMac) {
+    template.push({
+      label: APP_TITLE,
       submenu: [
-        { label: '新建', accelerator: accel('Ctrl+N', 'Cmd+N'), click: () => sendMenuCommand(winGetter(), { type: 'file:new' }) },
-        { label: '打开…', accelerator: accel('Ctrl+O', 'Cmd+O'), click: () => sendMenuCommand(winGetter(), { type: 'file:open' }) },
+        { role: 'about' },
         { type: 'separator' },
-        { label: '保存', accelerator: accel('Ctrl+S', 'Cmd+S'), click: () => sendMenuCommand(winGetter(), { type: 'file:save' }) },
-        { label: '另存为…', accelerator: accel('Ctrl+Shift+S', 'Cmd+Shift+S'), click: () => sendMenuCommand(winGetter(), { type: 'file:saveAs' }) },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
         { type: 'separator' },
         {
-          label: '导出',
-          submenu: [
-            { label: 'HTML…', click: () => sendMenuCommand(winGetter(), { type: 'file:exportHtml' }) },
-            { label: 'PDF…', click: () => sendMenuCommand(winGetter(), { type: 'file:exportPdf' }) },
-            { label: 'Word（.doc）…', click: () => sendMenuCommand(winGetter(), { type: 'file:exportWord' }) }
-          ]
-        },
-        { type: 'separator' },
-        { label: '关闭标签页', accelerator: accel('Ctrl+W', 'Cmd+W'), click: () => sendMenuCommand(winGetter(), { type: 'file:closeTab' }) },
-        { type: 'separator' },
-        ...(isMac
-          ? []
-          : [
-              {
-                label: '退出',
-                accelerator: 'Alt+F4',
-                click: () => app.quit()
-              }
-            ])
-      ]
-    },
-    {
-      label: '编辑',
-      submenu: [
-        { label: '撤销', accelerator: accel('Ctrl+Z', 'Cmd+Z'), click: () => sendMenuCommand(winGetter(), { type: 'edit:undo' }) },
-        { label: '重做', accelerator: accel('Ctrl+Y', 'Cmd+Shift+Z'), click: () => sendMenuCommand(winGetter(), { type: 'edit:redo' }) },
-        { type: 'separator' },
-        // 这些操作必须作用于“当前聚焦控件”（CodeMirror/input 等），用 webContents 原生实现最稳
-        { label: '剪切', accelerator: accel('Ctrl+X', 'Cmd+X'), click: () => winGetter()?.webContents.cut() },
-        { label: '复制', accelerator: accel('Ctrl+C', 'Cmd+C'), click: () => winGetter()?.webContents.copy() },
-        { label: '粘贴', accelerator: accel('Ctrl+V', 'Cmd+V'), click: () => winGetter()?.webContents.paste() },
-        { type: 'separator' },
-        { label: '全选', accelerator: accel('Ctrl+A', 'Cmd+A'), click: () => winGetter()?.webContents.selectAll() },
-        { type: 'separator' },
-        { label: '查找…', accelerator: accel('Ctrl+F', 'Cmd+F'), click: () => sendMenuCommand(winGetter(), { type: 'edit:find' }) },
-        { label: '替换…', accelerator: accel('Ctrl+H', 'Cmd+Alt+F'), click: () => sendMenuCommand(winGetter(), { type: 'edit:replace' }) },
-        { label: '转到行…', accelerator: accel('Ctrl+G', 'Cmd+L'), click: () => sendMenuCommand(winGetter(), { type: 'edit:gotoLine' }) },
-        { type: 'separator' },
-        { label: '插入时间/日期', accelerator: accel('F5', 'F5'), click: () => sendMenuCommand(winGetter(), { type: 'edit:insertDateTime' }) }
-      ]
-    },
-    {
-      label: '格式',
-      submenu: [
-        { label: '自动换行', type: 'checkbox', checked: true, click: () => sendMenuCommand(winGetter(), { type: 'format:wordWrapToggle' }) },
-        { label: '字体…', click: () => sendMenuCommand(winGetter(), { type: 'format:font' }) }
-      ]
-    },
-    {
-      label: '视图',
-      submenu: [
-        { label: '状态栏', type: 'checkbox', checked: true, click: () => sendMenuCommand(winGetter(), { type: 'view:statusBarToggle' }) },
-        { type: 'separator' },
-        { label: 'Markdown 预览模式（编辑/预览/分栏）', accelerator: accel('Ctrl+P', 'Cmd+P'), click: () => sendMenuCommand(winGetter(), { type: 'view:togglePreviewMode' }) }
-      ]
-    },
-    {
-      label: '编码',
-      submenu: [
-        { label: 'UTF-8', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'utf8' }) },
-        { label: 'UTF-16LE', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'utf16le' }) },
-        { type: 'separator' },
-        { label: 'GBK', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'gbk' }) },
-        { label: 'GB18030', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'gb18030' }) },
-        { type: 'separator' },
-        { label: 'ANSI（Windows-1252）', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'windows1252' }) }
-      ]
-    },
-    {
-      label: '窗口',
-      submenu: [
-        { role: 'minimize' },
-        ...(isMac ? [{ role: 'zoom' } as Electron.MenuItemConstructorOptions] : [{ role: 'togglefullscreen' }]),
-        { type: 'separator' },
-        {
-          label: '切换最大化/还原',
-          accelerator: accel('F11', 'Ctrl+Cmd+F'),
-          click: () => {
-            const win = winGetter()
-            if (!win) return
-            if (win.isMaximized()) win.unmaximize()
-            else win.maximize()
-          }
-        },
-        { type: 'separator' },
-        ...(isMac
-          ? [
-              {
-                label: '关闭窗口',
-                accelerator: 'Cmd+Shift+W',
-                click: () => winGetter()?.close()
-              }
-            ]
-          : [
-              {
-                label: '关闭窗口',
-                click: () => winGetter()?.close()
-              }
-            ])
-      ]
-    },
-    {
-      label: '帮助',
-      submenu: [
-        {
-          label: '项目主页',
-          click: async () => {
-            await shell.openExternal('https://github.com/sim4next/Sim4SideMarkdown')
-          }
-        },
-        {
-          label: '切换深色/浅色（跟随系统）',
-          click: () => {
-            nativeTheme.themeSource = nativeTheme.shouldUseDarkColors ? 'light' : 'dark'
-          }
+          label: '退出',
+          accelerator: 'Cmd+Q',
+          click: () => app.quit()
         }
       ]
-    }
-  ]
+    })
+  }
+
+  template.push({
+    label: '文件',
+    submenu: [
+      { label: '新建', accelerator: accel('Ctrl+N', 'Cmd+N'), click: () => sendMenuCommand(winGetter(), { type: 'file:new' }) },
+      { label: '打开…', accelerator: accel('Ctrl+O', 'Cmd+O'), click: () => sendMenuCommand(winGetter(), { type: 'file:open' }) },
+      { type: 'separator' },
+      { label: '保存', accelerator: accel('Ctrl+S', 'Cmd+S'), click: () => sendMenuCommand(winGetter(), { type: 'file:save' }) },
+      { label: '另存为…', accelerator: accel('Ctrl+Shift+S', 'Cmd+Shift+S'), click: () => sendMenuCommand(winGetter(), { type: 'file:saveAs' }) },
+      { type: 'separator' },
+      {
+        label: '导出',
+        submenu: [
+          { label: 'HTML…', click: () => sendMenuCommand(winGetter(), { type: 'file:exportHtml' }) },
+          { label: 'PDF…', click: () => sendMenuCommand(winGetter(), { type: 'file:exportPdf' }) },
+          { label: 'Word（.doc）…', click: () => sendMenuCommand(winGetter(), { type: 'file:exportWord' }) }
+        ]
+      },
+      { type: 'separator' },
+      { label: '关闭标签页', accelerator: accel('Ctrl+W', 'Cmd+W'), click: () => sendMenuCommand(winGetter(), { type: 'file:closeTab' }) },
+      { type: 'separator' },
+      ...(isMac
+        ? []
+        : [
+            {
+              label: '退出',
+              accelerator: 'Alt+F4',
+              click: () => app.quit()
+            }
+          ])
+    ]
+  })
+
+  template.push({
+    label: '编辑',
+    submenu: [
+      { label: '撤销', accelerator: accel('Ctrl+Z', 'Cmd+Z'), click: () => sendMenuCommand(winGetter(), { type: 'edit:undo' }) },
+      { label: '重做', accelerator: accel('Ctrl+Y', 'Cmd+Shift+Z'), click: () => sendMenuCommand(winGetter(), { type: 'edit:redo' }) },
+      { type: 'separator' },
+      // 这些操作必须作用于“当前聚焦控件”（CodeMirror/input 等），用 webContents 原生实现最稳
+      { label: '剪切', accelerator: accel('Ctrl+X', 'Cmd+X'), click: () => winGetter()?.webContents.cut() },
+      { label: '复制', accelerator: accel('Ctrl+C', 'Cmd+C'), click: () => winGetter()?.webContents.copy() },
+      { label: '粘贴', accelerator: accel('Ctrl+V', 'Cmd+V'), click: () => winGetter()?.webContents.paste() },
+      { type: 'separator' },
+      { label: '全选', accelerator: accel('Ctrl+A', 'Cmd+A'), click: () => winGetter()?.webContents.selectAll() },
+      { type: 'separator' },
+      { label: '查找…', accelerator: accel('Ctrl+F', 'Cmd+F'), click: () => sendMenuCommand(winGetter(), { type: 'edit:find' }) },
+      { label: '替换…', accelerator: accel('Ctrl+H', 'Cmd+Alt+F'), click: () => sendMenuCommand(winGetter(), { type: 'edit:replace' }) },
+      { label: '转到行…', accelerator: accel('Ctrl+G', 'Cmd+L'), click: () => sendMenuCommand(winGetter(), { type: 'edit:gotoLine' }) },
+      { type: 'separator' },
+      { label: '插入时间/日期', accelerator: accel('F5', 'F5'), click: () => sendMenuCommand(winGetter(), { type: 'edit:insertDateTime' }) }
+    ]
+  })
+
+  template.push({
+    label: '格式',
+    submenu: [
+      { label: '自动换行', type: 'checkbox', checked: true, click: () => sendMenuCommand(winGetter(), { type: 'format:wordWrapToggle' }) },
+      { label: '字体…', click: () => sendMenuCommand(winGetter(), { type: 'format:font' }) }
+    ]
+  })
+
+  template.push({
+    label: '视图',
+    submenu: [
+      { label: '状态栏', type: 'checkbox', checked: true, click: () => sendMenuCommand(winGetter(), { type: 'view:statusBarToggle' }) },
+      { type: 'separator' },
+      { label: 'Markdown 预览模式（编辑/预览/分栏）', accelerator: accel('Ctrl+P', 'Cmd+P'), click: () => sendMenuCommand(winGetter(), { type: 'view:togglePreviewMode' }) }
+    ]
+  })
+
+  template.push({
+    label: '编码',
+    submenu: [
+      { label: 'UTF-8', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'utf8' }) },
+      { label: 'UTF-16LE', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'utf16le' }) },
+      { type: 'separator' },
+      { label: 'GBK', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'gbk' }) },
+      { label: 'GB18030', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'gb18030' }) },
+      { type: 'separator' },
+      { label: 'ANSI（Windows-1252）', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'windows1252' }) }
+    ]
+  })
+
+  template.push({
+    label: '窗口',
+    submenu: [
+      { role: 'minimize' },
+      isMac ? { role: 'zoom' } : { role: 'togglefullscreen' },
+      { type: 'separator' },
+      {
+        label: '切换最大化/还原',
+        accelerator: accel('F11', 'Ctrl+Cmd+F'),
+        click: () => {
+          const win = winGetter()
+          if (!win) return
+          if (win.isMaximized()) win.unmaximize()
+          else win.maximize()
+        }
+      },
+      { type: 'separator' },
+      ...(isMac
+        ? [
+            {
+              label: '关闭窗口',
+              accelerator: 'Cmd+Shift+W',
+              click: () => winGetter()?.close()
+            }
+          ]
+        : [
+            {
+              label: '关闭窗口',
+              click: () => winGetter()?.close()
+            }
+          ])
+    ]
+  })
+
+  template.push({
+    label: '帮助',
+    submenu: [
+      {
+        id: 'help.version',
+        label: getUpdateMenuLabel(appSettings.locale),
+        click: async () => {
+          await startUpdate()
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '项目主页',
+        click: async () => {
+          await shell.openExternal('https://github.com/sim4next/Sim4SideMarkdown')
+        }
+      },
+      {
+        label: '切换深色/浅色（跟随系统）',
+        click: () => {
+          nativeTheme.themeSource = nativeTheme.shouldUseDarkColors ? 'light' : 'dark'
+        }
+      }
+    ]
+  })
 
   const menu = Menu.buildFromTemplate(template)
   Menu.setApplicationMenu(menu)
+  syncUpdateMenuState()
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -1026,8 +1258,13 @@ app.whenReady().then(async () => {
   }
 
   await createMainWindow()
+  initAutoUpdater()
 
   // ===== IPC =====
+  ipcMain.handle('app:getVersion', async () => {
+    return app.getVersion()
+  })
+
   ipcMain.handle('fs:openFiles', async () => {
     if (!mainWindow) return []
     return await openFilesWithDialog(mainWindow)
@@ -1078,6 +1315,24 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('app:quit', async () => {
     app.quit()
+  })
+
+  // ===== Auto update =====
+  ipcMain.handle('update:getState', async () => {
+    return updateState
+  })
+
+  ipcMain.handle('update:check', async () => {
+    return await checkForUpdates({ silent: false })
+  })
+
+  ipcMain.handle('update:start', async () => {
+    return await startUpdate()
+  })
+
+  ipcMain.handle('update:quitAndInstall', async () => {
+    updateInstallRequested = true
+    autoUpdater.quitAndInstall()
   })
 
   // ===== Window controls (frameless title bar) =====
@@ -1174,6 +1429,9 @@ app.whenReady().then(async () => {
       mainWindow.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0b0f17' : '#ffffff')
       mainWindow.webContents.send('settings:changed', next)
     }
+
+    // locale 变化时需要同步刷新系统菜单中的“版本”文案
+    syncUpdateMenuState()
 
     await writeSettings(next)
     return next

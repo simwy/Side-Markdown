@@ -7,10 +7,12 @@ import type {
   OpenedFile,
   SaveFileRequest,
   SaveFileResponse,
-  SessionState
+  SessionState,
+  UpdateState
 } from './shared'
 
 export type ElectronAPI = {
+  getAppVersion: () => Promise<string>
   openFiles: () => Promise<OpenedFile[]>
   openFilePaths: (filePaths: string[], opts?: { quiet?: boolean }) => Promise<OpenedFile[]>
   saveFile: (req: SaveFileRequest) => Promise<SaveFileResponse | null>
@@ -23,6 +25,11 @@ export type ElectronAPI = {
   onOpenedFiles: (handler: (files: OpenedFile[]) => void) => () => void
   sessionLoad: () => Promise<SessionState>
   sessionSave: (session: SessionState) => Promise<void>
+  updateGetState: () => Promise<UpdateState>
+  updateCheck: () => Promise<UpdateState>
+  updateStart: () => Promise<UpdateState>
+  updateQuitAndInstall: () => Promise<void>
+  onUpdateState: (handler: (state: UpdateState) => void) => () => void
   windowMinimize: () => Promise<void>
   windowToggleMaximize: () => Promise<void>
   windowClose: () => Promise<void>
@@ -42,6 +49,7 @@ export type ElectronAPI = {
 }
 
 const api: ElectronAPI = {
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   openFiles: () => ipcRenderer.invoke('fs:openFiles'),
   openFilePaths: (filePaths, opts) => ipcRenderer.invoke('fs:openFilePaths', filePaths, opts),
   saveFile: (req) => ipcRenderer.invoke('fs:saveFile', req),
@@ -62,6 +70,15 @@ const api: ElectronAPI = {
   },
   sessionLoad: () => ipcRenderer.invoke('session:load'),
   sessionSave: (session) => ipcRenderer.invoke('session:save', session),
+  updateGetState: () => ipcRenderer.invoke('update:getState'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateStart: () => ipcRenderer.invoke('update:start'),
+  updateQuitAndInstall: () => ipcRenderer.invoke('update:quitAndInstall'),
+  onUpdateState: (handler) => {
+    const listener = (_evt: Electron.IpcRendererEvent, state: UpdateState) => handler(state)
+    ipcRenderer.on('update:state', listener)
+    return () => ipcRenderer.removeListener('update:state', listener)
+  },
   windowMinimize: () => ipcRenderer.invoke('window:minimize'),
   windowToggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
   windowClose: () => ipcRenderer.invoke('window:close'),

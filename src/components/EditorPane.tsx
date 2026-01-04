@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useEffect, useMemo, useRef } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import type { EditorView } from '@codemirror/view'
 import { buildEditorExtensions } from '../editor/editorExtensions'
@@ -15,6 +15,14 @@ export function EditorPane(props: {
     [props.kind, props.wordWrap]
   )
 
+  const viewRef = useRef<EditorView | null>(null)
+  useEffect(() => {
+    return () => {
+      viewRef.current = null
+      props.onViewReady(null)
+    }
+  }, [props.onViewReady])
+
   return (
     <CodeMirror
       className="editor-pane"
@@ -26,7 +34,10 @@ export function EditorPane(props: {
       basicSetup={false}
       extensions={extensions}
       onChange={(val) => props.onChange(val)}
-      onCreateEditor={(view) => props.onViewReady(view)}
+      onCreateEditor={(view) => {
+        viewRef.current = view
+        props.onViewReady(view)
+      }}
     />
   )
 }

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EditorView } from '@codemirror/view'
 import { undo, redo, selectAll } from '@codemirror/commands'
-import type { AppSettings, Locale, MenuCommand } from '../electron/shared'
+import type { AppSettings, Locale, MenuCommand, UpdateState } from '../electron/shared'
 import type { DocTab, EditorFont, PreviewMode } from './appTypes'
 import { EditorPane } from './components/EditorPane'
 import { MarkdownToolbar } from './components/MarkdownToolbar'
@@ -11,9 +11,10 @@ import { FindReplaceDialog } from './components/FindReplaceDialog'
 import { WindowControls } from './components/WindowControls'
 import { DockButtons } from './components/DockButtons'
 import { SettingsDialog } from './components/SettingsDialog'
-import { TitlebarDropdown } from './components/TitlebarDropdown'
+import { TitlebarDropdown, type TitlebarDropdownItem } from './components/TitlebarDropdown'
 import { PanelToggleButtons } from './components/PanelToggleButtons'
 import { TocPane, type TocItem } from './components/TocPane'
+import { IconChevronLeft, IconChevronRight } from './components/icons/PanelIcons'
 import { renderMarkdownToSafeHtml } from './markdown'
 import { t } from './i18n'
 
@@ -49,12 +50,51 @@ function escapeHtmlText(s: string) {
     .replaceAll("'", '&#39;')
 }
 
+function getHeadingDepthRange(md: string): { minDepth: number; maxDepth: number } | null {
+  const lines = md.split(/\r?\n/)
+  let inFence = false
+  let fence: '```' | '~~~' | null = null
+  let minDepth = Number.POSITIVE_INFINITY
+  let maxDepth = Number.NEGATIVE_INFINITY
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i]!
+    const line = rawLine.replace(/\t/g, '    ')
+    const fenceMatch = line.match(/^\s*(```|~~~)/)
+    if (fenceMatch) {
+      const f = fenceMatch[1] as '```' | '~~~'
+      if (!inFence) {
+        inFence = true
+        fence = f
+      } else if (fence === f) {
+        inFence = false
+        fence = null
+      }
+      continue
+    }
+    if (inFence) continue
+
+    const m = line.match(/^(#{1,6})\s+(.+?)\s*$/)
+    if (!m) continue
+    const depth = m[1]!.length
+    const text = m[2]!.replace(/\s+#+\s*$/, '').trim()
+    if (!text) continue
+    minDepth = Math.min(minDepth, depth)
+    maxDepth = Math.max(maxDepth, depth)
+  }
+
+  if (!Number.isFinite(minDepth) || !Number.isFinite(maxDepth)) return null
+  return { minDepth, maxDepth }
+}
+
 function isMacPlatform() {
   return navigator.userAgent.toLowerCase().includes('mac')
 }
 
 export function App() {
   const isMac = useMemo(() => isMacPlatform(), [])
+  const [appVersion, setAppVersion] = useState<string>('')
+  const [upd, setUpd] = useState<UpdateState | null>(null)
   const [settings, setSettings] = useState<AppSettings>({
     theme: 'system',
     locale: 'zh-CN',
@@ -87,6 +127,7 @@ export function App() {
   const [previewMode, setPreviewMode] = useState<PreviewMode>('edit')
   const [showToc, setShowToc] = useState(true)
   const [pendingJump, setPendingJump] = useState<TocItem | null>(null)
+  const [tocMaxDepth, setTocMaxDepth] = useState<number>(6)
   const [font, setFont] = useState<EditorFont>({
     family: 'ui-monospace',
     sizePx: 14,
@@ -100,6 +141,8 @@ export function App() {
 
   const activeTab = useMemo(() => tabs.find((t) => t.id === activeId) ?? tabs[0], [tabs, activeId])
   const editorViewRef = useRef<EditorView | null>(null)
+  const editorScrollSyncCleanupRef = useRef<null | (() => void)>(null)
+  const editorScrollSyncRafRef = useRef<number | null>(null)
   const saveSessionTimerRef = useRef<number | null>(null)
 
   const activeIndex = useMemo(() => {
@@ -125,6 +168,14 @@ export function App() {
     // 读取持久化设置（主题/语言/贴边参数）
     void window.electronAPI.getSettings().then((s) => setSettings(s))
     return window.electronAPI.onSettingsChanged((s) => setSettings(s))
+  }, [])
+
+  useEffect(() => {
+    let unsub = () => {}
+    void window.electronAPI.getAppVersion().then((v) => setAppVersion(v))
+    void window.electronAPI.updateGetState().then((s) => setUpd(s))
+    unsub = window.electronAPI.onUpdateState((s) => setUpd(s))
+    return () => unsub()
   }, [])
 
   useEffect(() => {
@@ -381,6 +432,73 @@ export function App() {
     if (format === 'word') await window.electronAPI.exportWord(req)
   }
 
+  const syncPreviewScrollFromEditor = useCallback((view: EditorView) => {
+    const preview = document.querySelector('.preview-pane') as HTMLElement | null
+    if (!preview) return
+
+    const editor = view.scrollDOM
+    const editorMax = editor.scrollHeight - editor.clientHeight
+    const previewMax = preview.scrollHeight - preview.clientHeight
+
+    if (editorMax <= 0 || previewMax <= 0) {
+      preview.scrollTop = 0
+      return
+    }
+
+    const ratio = editor.scrollTop / editorMax
+    preview.scrollTop = ratio * previewMax
+  }, [])
+
+  const handleEditorViewReady = useCallback(
+    (v: EditorView | null) => {
+      editorViewRef.current = v
+
+      if (editorScrollSyncCleanupRef.current) {
+        editorScrollSyncCleanupRef.current()
+        editorScrollSyncCleanupRef.current = null
+      }
+
+      if (!v) return
+
+      const onScroll = () => {
+        if (editorScrollSyncRafRef.current != null) {
+          cancelAnimationFrame(editorScrollSyncRafRef.current)
+        }
+        editorScrollSyncRafRef.current = requestAnimationFrame(() => {
+          editorScrollSyncRafRef.current = null
+          syncPreviewScrollFromEditor(v)
+        })
+      }
+
+      v.scrollDOM.addEventListener('scroll', onScroll, { passive: true })
+      editorScrollSyncCleanupRef.current = () => {
+        v.scrollDOM.removeEventListener('scroll', onScroll)
+        if (editorScrollSyncRafRef.current != null) {
+          cancelAnimationFrame(editorScrollSyncRafRef.current)
+          editorScrollSyncRafRef.current = null
+        }
+      }
+
+      // 首次绑定时先同步一次（等预览 DOM ready 一帧更稳）
+      requestAnimationFrame(() => syncPreviewScrollFromEditor(v))
+    },
+    [syncPreviewScrollFromEditor]
+  )
+
+  useEffect(() => {
+    return () => {
+      if (editorScrollSyncCleanupRef.current) editorScrollSyncCleanupRef.current()
+      editorScrollSyncCleanupRef.current = null
+    }
+  }, [])
+
+  // 预览重新渲染/切换可见后，按当前编辑器位置再对齐一次
+  useEffect(() => {
+    const v = editorViewRef.current
+    if (!v) return
+    requestAnimationFrame(() => syncPreviewScrollFromEditor(v))
+  }, [html, previewMode, syncPreviewScrollFromEditor])
+
   const dispatchToEditor = (fn: (view: EditorView) => void) => {
     const view = editorViewRef.current
     if (!view) return
@@ -540,6 +658,52 @@ export function App() {
   const isMarkdown = activeTab?.kind === 'markdown'
   const editorVisible = !!activeTab && (!isMarkdown || previewMode === 'edit' || previewMode === 'split')
   const previewVisible = !!activeTab && !!isMarkdown && (previewMode === 'preview' || previewMode === 'split')
+  const tocDepthRange = useMemo(() => {
+    if (!activeTab) return null
+    if (activeTab.kind !== 'markdown') return null
+    return getHeadingDepthRange(activeTab.content)
+  }, [activeTab?.kind, activeTab?.content])
+
+  // When switching tabs, default TOC to "fully expanded" depth.
+  useEffect(() => {
+    if (!tocDepthRange) return
+    setTocMaxDepth(tocDepthRange.maxDepth)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId])
+
+  // While editing, keep current depth within the doc's available min/max range.
+  useEffect(() => {
+    if (!tocDepthRange) return
+    setTocMaxDepth((prev) => Math.max(tocDepthRange.minDepth, Math.min(tocDepthRange.maxDepth, prev)))
+  }, [tocDepthRange?.minDepth, tocDepthRange?.maxDepth])
+
+  const titlebarMenuItems = useMemo<TitlebarDropdownItem[]>(() => {
+    const updateBadge = upd?.status === 'available' || upd?.status === 'downloaded' ? ('dot' as const) : undefined
+    const versionRight = `v${appVersion || '-'}`
+
+    return [
+      { label: t(locale, 'new'), onClick: newTab },
+      { label: t(locale, 'open'), onClick: () => void openFiles() },
+      { label: t(locale, 'save'), onClick: () => void saveActive(false) },
+      {
+        label: t(locale, 'export'),
+        children: [
+          { label: t(locale, 'export.html'), onClick: () => void exportAs('html') },
+          { label: t(locale, 'export.pdf'), onClick: () => void exportAs('pdf') },
+          { label: t(locale, 'export.word'), onClick: () => void exportAs('word') }
+        ]
+      },
+      { kind: 'separator', label: '__sep__1' },
+      {
+        label: t(locale, 'version'),
+        rightText: versionRight,
+        badge: updateBadge,
+        onClick: () => void window.electronAPI.updateStart()
+      },
+      { label: t(locale, 'settings'), onClick: () => setShowSettings(true) },
+      { label: t(locale, 'quit'), onClick: () => void window.electronAPI.quit() }
+    ]
+  }, [locale, upd, appVersion, newTab, openFiles, saveActive, exportAs])
 
   const applyPreviewMode = (nextEditor: boolean, nextPreview: boolean) => {
     // 防止全关导致空白：至少保留一个面板
@@ -632,21 +796,7 @@ export function App() {
 
                 <TitlebarDropdown
                   buttonLabel={t(locale, 'menu')}
-                  items={[
-                    { label: t(locale, 'new'), onClick: newTab },
-                    { label: t(locale, 'open'), onClick: () => void openFiles() },
-                    { label: t(locale, 'save'), onClick: () => void saveActive(false) },
-                    {
-                      label: t(locale, 'export'),
-                      children: [
-                        { label: t(locale, 'export.html'), onClick: () => void exportAs('html') },
-                        { label: t(locale, 'export.pdf'), onClick: () => void exportAs('pdf') },
-                        { label: t(locale, 'export.word'), onClick: () => void exportAs('word') }
-                      ]
-                    },
-                    { label: t(locale, 'settings'), onClick: () => setShowSettings(true) },
-                    { label: t(locale, 'quit'), onClick: () => void window.electronAPI.quit() }
-                  ]}
+                  items={titlebarMenuItems}
                 />
 
                 {/* 贴边模式下隐藏窗口控制按钮（最小化/最大化/关闭） */}
@@ -726,21 +876,7 @@ export function App() {
 
               <TitlebarDropdown
                 buttonLabel={t(locale, 'menu')}
-                items={[
-                  { label: t(locale, 'new'), onClick: newTab },
-                  { label: t(locale, 'open'), onClick: () => void openFiles() },
-                  { label: t(locale, 'save'), onClick: () => void saveActive(false) },
-                  {
-                    label: t(locale, 'export'),
-                    children: [
-                      { label: t(locale, 'export.html'), onClick: () => void exportAs('html') },
-                      { label: t(locale, 'export.pdf'), onClick: () => void exportAs('pdf') },
-                      { label: t(locale, 'export.word'), onClick: () => void exportAs('word') }
-                    ]
-                  },
-                  { label: t(locale, 'settings'), onClick: () => setShowSettings(true) },
-                  { label: t(locale, 'quit'), onClick: () => void window.electronAPI.quit() }
-                ]}
+                items={titlebarMenuItems}
               />
 
               {!isMac ? <WindowControls /> : null}
@@ -768,6 +904,7 @@ export function App() {
         ) : dockMode === 'center' ? (
           <>
             <PanelToggleButtons
+              locale={locale}
               kind={activeTab.kind}
               tocVisible={isMarkdown && showToc}
               editorVisible={editorVisible}
@@ -790,16 +927,46 @@ export function App() {
               const panes: React.ReactNode[] = []
 
               if (isMarkdown && showToc) {
+                const minDepth = tocDepthRange?.minDepth ?? 1
+                const maxDepth = tocDepthRange?.maxDepth ?? 1
+                const canCollapse = !!tocDepthRange && tocMaxDepth > minDepth
+                const canExpand = !!tocDepthRange && tocMaxDepth < maxDepth
+
                 panes.push(
                   <div key="toc" className="pane readonly" data-pane="toc">
                     <div className="pane-header">
-                      <div className="pane-title">目录</div>
-                      <div className="pane-badges">
-                        <span className="pane-badge readonly" title="该区域不可编辑，可点击跳转">只读</span>
+                      <div className="pane-title-group">
+                        <div className="pane-title">{t(locale, 'pane.toc')}</div>
+                        <div className="pane-title-actions no-drag" aria-label="TOC depth controls">
+                          <button
+                            className="icon-btn pane-icon-btn"
+                            title="回收一层"
+                            aria-label="回收一层"
+                            disabled={!canCollapse}
+                            onClick={() => setTocMaxDepth((d) => Math.max(minDepth, d - 1))}
+                          >
+                            <IconChevronLeft size={14} />
+                          </button>
+                          <button
+                            className="icon-btn pane-icon-btn"
+                            title="展开一层"
+                            aria-label="展开一层"
+                            disabled={!canExpand}
+                            onClick={() => setTocMaxDepth((d) => Math.min(maxDepth, d + 1))}
+                          >
+                            <IconChevronRight size={14} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                     <div className="pane-body">
-                      <TocPane markdown={activeTab.content} onJump={jumpToHeading} showHeader={false} />
+                      <TocPane
+                        markdown={activeTab.content}
+                        locale={locale}
+                        onJump={jumpToHeading}
+                        showHeader={false}
+                        maxDepth={tocMaxDepth}
+                      />
                     </div>
                   </div>
                 )
@@ -809,7 +976,7 @@ export function App() {
                 panes.push(
                   <div key="editor" className="pane editable" data-pane="editor">
                     <div className="pane-header">
-                      <div className="pane-title">编辑器</div>
+                      <div className="pane-title">{t(locale, 'pane.editor')}</div>
                       <div className="pane-badges">
                         <span className="pane-badge editable" title="该区域可编辑">可编辑</span>
                       </div>
@@ -826,7 +993,7 @@ export function App() {
                           kind={activeTab.kind}
                           value={activeTab.content}
                           wordWrap={wordWrap}
-                          onViewReady={(v) => (editorViewRef.current = v)}
+                          onViewReady={handleEditorViewReady}
                           onChange={(next) =>
                             setTabs((prev) =>
                               prev.map((x) => (x.id === activeTab.id ? { ...x, content: next, dirty: true } : x))
@@ -844,10 +1011,7 @@ export function App() {
                 panes.push(
                   <div key="preview" className="pane readonly" data-pane="preview">
                     <div className="pane-header">
-                      <div className="pane-title">预览</div>
-                      <div className="pane-badges">
-                        <span className="pane-badge readonly" title="该区域不可编辑（用于阅读预览）">只读</span>
-                      </div>
+                      <div className="pane-title">{t(locale, 'pane.preview')}</div>
                     </div>
                     <div className="pane-body">
                       <div className="preview preview-pane" dangerouslySetInnerHTML={{ __html: html }} />
@@ -875,7 +1039,7 @@ export function App() {
                   kind={activeTab.kind}
                   value={activeTab.content}
                   wordWrap={wordWrap}
-                  onViewReady={(v) => (editorViewRef.current = v)}
+                  onViewReady={handleEditorViewReady}
                   onChange={(next) =>
                     setTabs((prev) =>
                       prev.map((x) => (x.id === activeTab.id ? { ...x, content: next, dirty: true } : x))

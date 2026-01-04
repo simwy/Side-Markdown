@@ -8,6 +8,7 @@ export type I18nKey =
   | 'export.html'
   | 'export.pdf'
   | 'export.word'
+  | 'version'
   | 'back'
   | 'menu'
   | 'quit'
@@ -47,6 +48,15 @@ export type I18nKey =
   | 'md.image'
   | 'md.table'
   | 'md.hr'
+  | 'pane.toc'
+  | 'pane.editor'
+  | 'pane.preview'
+  | 'toc.aria'
+  | 'toc.empty'
+  | 'panelToggle.group'
+  | 'panelToggle.toc'
+  | 'panelToggle.editor'
+  | 'panelToggle.preview'
 
 const dict: Record<Locale, Record<I18nKey, string>> = {
   'zh-CN': {
@@ -57,6 +67,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'export.html': '导出为 HTML',
     'export.pdf': '导出为 PDF',
     'export.word': '导出为 Word（.doc）',
+    version: '版本',
     back: '返回',
     menu: '菜单',
     quit: '退出',
@@ -95,7 +106,16 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.link': '链接（[text](url)）',
     'md.image': '图片（![alt](url)）',
     'md.table': '表格',
-    'md.hr': '分割线（---）'
+    'md.hr': '分割线（---）',
+    'pane.toc': '目录',
+    'pane.editor': '编辑器',
+    'pane.preview': '预览',
+    'toc.aria': 'Markdown 目录',
+    'toc.empty': '（未检测到标题）',
+    'panelToggle.group': '显示/隐藏面板',
+    'panelToggle.toc': 'Markdown 目录',
+    'panelToggle.editor': '编辑器',
+    'panelToggle.preview': '预览'
   },
   'zh-TW': {
     new: '新增',
@@ -105,6 +125,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'export.html': '匯出為 HTML',
     'export.pdf': '匯出為 PDF',
     'export.word': '匯出為 Word（.doc）',
+    version: '版本',
     back: '返回',
     menu: '選單',
     quit: '退出',
@@ -143,7 +164,16 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.link': '連結（[text](url)）',
     'md.image': '圖片（![alt](url)）',
     'md.table': '表格',
-    'md.hr': '分隔線（---）'
+    'md.hr': '分隔線（---）',
+    'pane.toc': '目錄',
+    'pane.editor': '編輯器',
+    'pane.preview': '預覽',
+    'toc.aria': 'Markdown 目錄',
+    'toc.empty': '（未偵測到標題）',
+    'panelToggle.group': '顯示/隱藏面板',
+    'panelToggle.toc': 'Markdown 目錄',
+    'panelToggle.editor': '編輯器',
+    'panelToggle.preview': '預覽'
   },
   en: {
     new: 'New',
@@ -153,6 +183,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'export.html': 'Export as HTML',
     'export.pdf': 'Export as PDF',
     'export.word': 'Export as Word (.doc)',
+    version: 'Version',
     back: 'Back',
     menu: 'Menu',
     quit: 'Quit',
@@ -191,7 +222,16 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.link': 'Link ([text](url))',
     'md.image': 'Image (![alt](url))',
     'md.table': 'Table',
-    'md.hr': 'Horizontal rule (---)'
+    'md.hr': 'Horizontal rule (---)',
+    'pane.toc': 'Outline',
+    'pane.editor': 'Editor',
+    'pane.preview': 'Preview',
+    'toc.aria': 'Markdown outline',
+    'toc.empty': '(No headings found)',
+    'panelToggle.group': 'Show/hide panels',
+    'panelToggle.toc': 'Markdown outline',
+    'panelToggle.editor': 'Editor',
+    'panelToggle.preview': 'Preview'
   },
   ja: {
     new: '新規',
@@ -201,6 +241,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'export.html': 'HTML にエクスポート',
     'export.pdf': 'PDF にエクスポート',
     'export.word': 'Word（.doc）にエクスポート',
+    version: 'バージョン',
     back: '戻る',
     menu: 'メニュー',
     quit: '終了',
@@ -239,7 +280,16 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.link': 'リンク（[text](url)）',
     'md.image': '画像（![alt](url)）',
     'md.table': '表',
-    'md.hr': '区切り線（---）'
+    'md.hr': '区切り線（---）',
+    'pane.toc': '目次',
+    'pane.editor': 'エディタ',
+    'pane.preview': 'プレビュー',
+    'toc.aria': 'Markdown 目次',
+    'toc.empty': '（見出しが見つかりません）',
+    'panelToggle.group': 'パネルの表示/非表示',
+    'panelToggle.toc': 'Markdown 目次',
+    'panelToggle.editor': 'エディタ',
+    'panelToggle.preview': 'プレビュー'
   },
   ko: {
     new: '새로 만들기',
@@ -249,6 +299,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'export.html': 'HTML로 내보내기',
     'export.pdf': 'PDF로 내보내기',
     'export.word': 'Word(.doc)로 내보내기',
+    version: '버전',
     back: '뒤로',
     menu: '메뉴',
     quit: '종료',
@@ -287,7 +338,16 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.link': '링크([text](url))',
     'md.image': '이미지(![alt](url))',
     'md.table': '표',
-    'md.hr': '가로줄(---)'
+    'md.hr': '가로줄(---)',
+    'pane.toc': '목차',
+    'pane.editor': '편집기',
+    'pane.preview': '미리보기',
+    'toc.aria': 'Markdown 목차',
+    'toc.empty': '(제목을 찾을 수 없음)',
+    'panelToggle.group': '패널 표시/숨기기',
+    'panelToggle.toc': 'Markdown 목차',
+    'panelToggle.editor': '편집기',
+    'panelToggle.preview': '미리보기'
   }
 }
 
