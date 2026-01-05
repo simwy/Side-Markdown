@@ -21,6 +21,12 @@ export type AnalyticsSettings = {
   baiduSiteId: string
   /** Google Analytics Measurement ID (e.g. G-XXXXXXX) */
   googleMeasurementId: string
+  /**
+   * GA4 Measurement Protocol API Secret.
+   * Required for reliable event tracking in Electron/desktop apps.
+   * Create in GA4 Admin > Data Streams > your stream > Measurement Protocol API secrets.
+   */
+  googleApiSecret?: string
   /** Optional debug mode (prints to console) */
   debug?: boolean
   /**
@@ -57,6 +63,7 @@ let baiduScriptLoaded = false
 let networkTapInstalled = false
 let gaMeasurementIdCurrent = ''
 let gaClientIdCurrent = ''
+let gaApiSecretCurrent = ''
 
 const pendingGa: Array<{ name: string; params?: Record<string, unknown> }> = []
 const pendingBaidu: Array<{ name: string; params?: Record<string, unknown> }> = []
@@ -244,44 +251,53 @@ function injectBaidu(siteId: string) {
   document.head.appendChild(hm)
 }
 
-function injectGA(measurementId: string) {
+function injectGA(measurementId: string, apiSecret?: string) {
   if (!measurementId) return
-  const existing = document.querySelector(`script[data-analytics="ga"][data-measurement-id="${measurementId}"]`) as
-    | HTMLScriptElement
-    | null
-  if (existing) {
-    gaMeasurementIdCurrent = measurementId
-    gaScriptLoaded = existing.dataset.loaded === '1'
-    // eslint-disable-next-line no-console
-    console.log('[analytics:inject]', { provider: 'ga', status: gaScriptLoaded ? 'loaded(existing)' : 'existing' })
-    if (gaScriptLoaded) {
-      try {
-        window.gtag?.('get', measurementId, 'client_id', (cid: unknown) => {
-          // eslint-disable-next-line no-console
-          console.log('[analytics:ga]', { status: 'client_id', measurementId: maskId(measurementId), clientId: cid })
-        })
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.log('[analytics:ga]', { status: 'get_client_id_error', error: e instanceof Error ? e.message : String(e) })
-      }
-      flushQueue('ga')
-    }
-    return
-  }
 
   gaMeasurementIdCurrent = measurementId
+  gaApiSecretCurrent = apiSecret?.trim() || ''
 
-  // Electron often runs with `file://` origin and/or stricter cookie settings.
-  // Provide a stable client_id and disable client storage to make GA more reliable in desktop contexts.
+  // Generate or retrieve a stable client_id for this installation.
+  // This is critical for GA4 Measurement Protocol to work correctly.
   try {
     const key = 'side_markdown_ga_client_id'
     const ls = window.localStorage
     const existingCid = typeof ls?.getItem === 'function' ? (ls.getItem(key) || '').trim() : ''
-    const cid = existingCid || (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`)
+    const cid = existingCid || (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}.${Math.random().toString(36).slice(2)}`)
     if (!existingCid && typeof ls?.setItem === 'function') ls.setItem(key, cid)
     gaClientIdCurrent = cid
   } catch {
-    gaClientIdCurrent = ''
+    // Fallback: generate a session-only client_id
+    gaClientIdCurrent = `${Date.now()}.${Math.random().toString(36).slice(2)}`
+  }
+
+  // eslint-disable-next-line no-console
+  console.log('[analytics:inject]', {
+    provider: 'ga',
+    mode: gaApiSecretCurrent ? 'measurement-protocol' : 'gtag-only',
+    measurementId: maskId(measurementId),
+    hasApiSecret: !!gaApiSecretCurrent,
+    clientId: gaClientIdCurrent
+  })
+
+  // If we have an API secret, we can use Measurement Protocol directly.
+  // Mark as "loaded" immediately since we don't need gtag.js for event sending.
+  if (gaApiSecretCurrent) {
+    gaScriptLoaded = true
+    flushQueue('ga')
+    return
+  }
+
+  // Fallback: try gtag.js (may not work reliably in Electron's file:// context)
+  const existing = document.querySelector(`script[data-analytics="ga"][data-measurement-id="${measurementId}"]`) as
+    | HTMLScriptElement
+    | null
+  if (existing) {
+    gaScriptLoaded = existing.dataset.loaded === '1'
+    // eslint-disable-next-line no-console
+    console.log('[analytics:inject]', { provider: 'ga', status: gaScriptLoaded ? 'loaded(existing)' : 'existing' })
+    if (gaScriptLoaded) flushQueue('ga')
+    return
   }
 
   // Stub dataLayer + gtag first so calls are queued even before network loads
@@ -297,7 +313,6 @@ function injectGA(measurementId: string) {
     anonymize_ip: true,
     send_page_view: false,
     debug_mode: currentDebug,
-    // Avoid relying on cookies; use provided client_id instead (best-effort).
     client_storage: 'none' as const,
     ...(gaClientIdCurrent ? { client_id: gaClientIdCurrent } : {})
   } as const
@@ -308,7 +323,8 @@ function injectGA(measurementId: string) {
   console.log('[analytics:inject]', {
     provider: 'ga',
     script: 'gtag.js',
-    measurementId: maskId(measurementId)
+    measurementId: maskId(measurementId),
+    note: 'gtag.js may not work reliably in Electron - recommend setting VITE_GA_API_SECRET'
   })
   const s = document.createElement('script')
   s.async = true
@@ -322,16 +338,11 @@ function injectGA(measurementId: string) {
     // eslint-disable-next-line no-console
     console.log('[analytics:inject]', { provider: 'ga', status: 'loaded' })
 
-    // Re-config once script is definitely loaded, then try to read client_id.
     try {
       window.gtag?.('config', measurementId, configParams)
-      window.gtag?.('get', measurementId, 'client_id', (cid: unknown) => {
-        // eslint-disable-next-line no-console
-        console.log('[analytics:ga]', { status: 'client_id', measurementId: maskId(measurementId), clientId: cid })
-      })
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.log('[analytics:ga]', { status: 'get_client_id_error', error: e instanceof Error ? e.message : String(e) })
+      console.log('[analytics:ga]', { status: 'config_error', error: e instanceof Error ? e.message : String(e) })
     }
 
     flushQueue('ga')
@@ -341,12 +352,86 @@ function injectGA(measurementId: string) {
     gaScriptLoaded = false
     s.dataset.loaded = '0'
     // eslint-disable-next-line no-console
-    console.log('[analytics:inject]', { provider: 'ga', status: 'error' })
+    console.log('[analytics:inject]', { provider: 'ga', status: 'error', note: 'gtag.js failed - set VITE_GA_API_SECRET for reliable tracking' })
   }
   document.head.appendChild(s)
 }
 
+/**
+ * Send event to GA4 using Measurement Protocol (preferred) or gtag.js (fallback).
+ * Measurement Protocol is more reliable in Electron/desktop environments.
+ *
+ * Uses navigator.sendBeacon() to avoid CORS preflight issues.
+ */
+function sendToGaMeasurementProtocol(name: string, params?: Record<string, unknown>): boolean {
+  if (!gaMeasurementIdCurrent || !gaApiSecretCurrent || !gaClientIdCurrent) {
+    return false
+  }
+
+  // Note: debug endpoint requires fetch (not sendBeacon) to read response.
+  // For production, use sendBeacon to avoid CORS issues.
+  const endpoint = 'https://www.google-analytics.com/mp/collect'
+  const url = `${endpoint}?measurement_id=${encodeURIComponent(gaMeasurementIdCurrent)}&api_secret=${encodeURIComponent(gaApiSecretCurrent)}`
+
+  // Build event payload per GA4 Measurement Protocol spec
+  const eventParams: Record<string, unknown> = { ...(params || {}) }
+  // Remove any params that should not be sent to GA4
+  delete eventParams.debug_mode
+
+  const payload = {
+    client_id: gaClientIdCurrent,
+    // Use timestamp_micros for more accurate event timing
+    timestamp_micros: Date.now() * 1000,
+    events: [
+      {
+        name,
+        params: eventParams
+      }
+    ]
+  }
+
+  // eslint-disable-next-line no-console
+  console.log('[analytics:send]', {
+    provider: 'ga',
+    mode: 'measurement-protocol',
+    status: 'sending',
+    event: name,
+    params: eventParams
+  })
+
+  try {
+    // Use sendBeacon with Blob to send JSON data without triggering CORS preflight.
+    // sendBeacon is ideal for analytics: fire-and-forget, works during page unload.
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' })
+    const success = navigator.sendBeacon(url, blob)
+
+    // eslint-disable-next-line no-console
+    console.log('[analytics:ga]', {
+      status: success ? 'sent' : 'sendBeacon_failed',
+      event: name,
+      method: 'sendBeacon'
+    })
+
+    return success
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.log('[analytics:ga]', {
+      status: 'error',
+      event: name,
+      error: e instanceof Error ? e.message : String(e)
+    })
+    return false
+  }
+}
+
 function sendToGa(name: string, params?: Record<string, unknown>) {
+  // Prefer Measurement Protocol if API secret is available (more reliable in Electron)
+  if (gaApiSecretCurrent && gaClientIdCurrent && gaMeasurementIdCurrent) {
+    void sendToGaMeasurementProtocol(name, params)
+    return
+  }
+
+  // Fallback to gtag.js
   // Important: we stub `window.gtag` before loading gtag.js, so `typeof window.gtag === 'function'`
   // does NOT guarantee events are actually sent to GA. Gate on the script onload instead.
   if (!gaScriptLoaded || typeof window.gtag !== 'function') {
@@ -355,7 +440,8 @@ function sendToGa(name: string, params?: Record<string, unknown>) {
       provider: 'ga',
       status: gaScriptLoaded ? 'queued(no-gtag)' : 'queued(gtag-js-not-loaded)',
       event: name,
-      params
+      params,
+      note: 'Set VITE_GA_API_SECRET for reliable GA4 tracking in Electron'
     })
     pendingGa.push({ name, params })
     return
@@ -433,12 +519,14 @@ export function initAnalytics(opts: {
   gaScriptLoaded = false
   baiduScriptLoaded = false
   gaMeasurementIdCurrent = ''
+  gaApiSecretCurrent = ''
   pendingGa.length = 0
   pendingBaidu.length = 0
   installNetworkTapOnce()
 
   const hasBaidu = Boolean(settings.baiduSiteId?.trim())
   const hasGa = Boolean(settings.googleMeasurementId?.trim())
+  const hasGaApiSecret = Boolean(settings.googleApiSecret?.trim())
   const nextProvider = resolveProvider(settings)
 
   // eslint-disable-next-line no-console
@@ -449,6 +537,8 @@ export function initAnalytics(opts: {
     isChinaUser: lastIsChina,
     hasBaiduSiteId: hasBaidu,
     hasGaMeasurementId: hasGa,
+    hasGaApiSecret,
+    gaMode: hasGa ? (hasGaApiSecret ? 'measurement-protocol' : 'gtag-only') : 'none',
     provider: nextProvider,
     providerMode: settings.provider || 'auto',
     debug: currentDebug
@@ -471,10 +561,10 @@ export function initAnalytics(opts: {
   }
 
   if (currentProvider === 'baidu') injectBaidu(settings.baiduSiteId.trim())
-  if (currentProvider === 'ga') injectGA(settings.googleMeasurementId.trim())
+  if (currentProvider === 'ga') injectGA(settings.googleMeasurementId.trim(), settings.googleApiSecret)
   if (currentProvider === 'both') {
     if (hasBaidu) injectBaidu(settings.baiduSiteId.trim())
-    if (hasGa) injectGA(settings.googleMeasurementId.trim())
+    if (hasGa) injectGA(settings.googleMeasurementId.trim(), settings.googleApiSecret)
   }
 
   // Try to flush in case provider already exists

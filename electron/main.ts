@@ -243,9 +243,183 @@ function getPreloadPath() {
   return path.join(app.getAppPath(), 'dist-electron', 'preload.cjs')
 }
 
+function getScreenshotSelectorPreloadPath() {
+  return path.join(app.getAppPath(), 'dist-electron', 'screenshotSelectorPreload.cjs')
+}
+
+function getScreenshotSelectorHtmlPath() {
+  // 开发模式下从 electron/ 目录读取，生产模式下从 dist-electron/ 读取
+  if (app.isPackaged) {
+    return path.join(app.getAppPath(), 'dist-electron', 'screenshot-selector.html')
+  }
+  return path.join(app.getAppPath(), 'electron', 'screenshot-selector.html')
+}
+
 function getIndexHtmlPath() {
   // vite build 输出到 dist/index.html
   return path.join(app.getAppPath(), 'dist', 'index.html')
+}
+
+// ===== Screenshot Selector =====
+let screenshotSelectorWindow: BrowserWindow | null = null
+let screenshotResolve: ((result: { type: 'region' | 'window' | 'fullscreen'; data: Buffer } | null) => void) | null = null
+let screenshotDisplayId: string = ''
+let screenshotDisplayBounds: Electron.Rectangle | null = null
+
+function getScreenshotI18n(locale: Locale): Record<string, string> {
+  const strings: Record<Locale, Record<string, string>> = {
+    'zh-CN': {
+      'mode.region': '区域选择',
+      'mode.window': '窗口选择',
+      'mode.fullscreen': '全屏截图',
+      'cancel': '取消',
+      'confirm': '确认截图',
+      'hint.region': '拖动鼠标选择截图区域，按 Esc 取消',
+      'hint.window': '点击选择要截取的窗口',
+      'hint.fullscreen': '点击确认截取整个屏幕',
+      'loading': '加载中...',
+      'window.screen': '屏幕'
+    },
+    'zh-TW': {
+      'mode.region': '區域選擇',
+      'mode.window': '視窗選擇',
+      'mode.fullscreen': '全螢幕截圖',
+      'cancel': '取消',
+      'confirm': '確認截圖',
+      'hint.region': '拖動滑鼠選擇截圖區域，按 Esc 取消',
+      'hint.window': '點擊選擇要截取的視窗',
+      'hint.fullscreen': '點擊確認截取整個螢幕',
+      'loading': '載入中...',
+      'window.screen': '螢幕'
+    },
+    en: {
+      'mode.region': 'Region',
+      'mode.window': 'Window',
+      'mode.fullscreen': 'Fullscreen',
+      'cancel': 'Cancel',
+      'confirm': 'Capture',
+      'hint.region': 'Drag to select region, press Esc to cancel',
+      'hint.window': 'Click to select a window',
+      'hint.fullscreen': 'Click to capture fullscreen',
+      'loading': 'Loading...',
+      'window.screen': 'Screen'
+    },
+    ja: {
+      'mode.region': '範囲選択',
+      'mode.window': 'ウィンドウ',
+      'mode.fullscreen': '全画面',
+      'cancel': 'キャンセル',
+      'confirm': 'キャプチャ',
+      'hint.region': 'ドラッグして範囲を選択、Escでキャンセル',
+      'hint.window': 'クリックしてウィンドウを選択',
+      'hint.fullscreen': 'クリックして全画面をキャプチャ',
+      'loading': '読み込み中...',
+      'window.screen': '画面'
+    },
+    ko: {
+      'mode.region': '영역 선택',
+      'mode.window': '창 선택',
+      'mode.fullscreen': '전체 화면',
+      'cancel': '취소',
+      'confirm': '캡처',
+      'hint.region': '드래그하여 영역 선택, Esc로 취소',
+      'hint.window': '클릭하여 창 선택',
+      'hint.fullscreen': '클릭하여 전체 화면 캡처',
+      'loading': '로딩 중...',
+      'window.screen': '화면'
+    }
+  }
+  return strings[locale] || strings.en
+}
+
+async function openScreenshotSelector(): Promise<{ type: 'region' | 'window' | 'fullscreen'; data: Buffer } | null> {
+  // 如果已经有选择器窗口打开，先关闭
+  if (screenshotSelectorWindow && !screenshotSelectorWindow.isDestroyed()) {
+    screenshotSelectorWindow.close()
+    screenshotSelectorWindow = null
+  }
+
+  // 获取主显示器信息
+  const primaryDisplay = screen.getPrimaryDisplay()
+  screenshotDisplayId = String(primaryDisplay.id)
+  screenshotDisplayBounds = primaryDisplay.bounds
+
+  // 隐藏主窗口
+  const wasVisible = mainWindow?.isVisible()
+  if (wasVisible) {
+    mainWindow?.hide()
+  }
+
+  // 等待一小段时间让窗口完全隐藏
+  await new Promise(resolve => setTimeout(resolve, 100))
+
+  return new Promise((resolve) => {
+    screenshotResolve = resolve
+
+    const i18nStrings = getScreenshotI18n(appSettings.locale)
+
+    screenshotSelectorWindow = new BrowserWindow({
+      x: screenshotDisplayBounds!.x,
+      y: screenshotDisplayBounds!.y,
+      width: screenshotDisplayBounds!.width,
+      height: screenshotDisplayBounds!.height,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      movable: false,
+      fullscreen: true,
+      show: false,
+      webPreferences: {
+        preload: getScreenshotSelectorPreloadPath(),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false // 需要访问 desktopCapturer
+      }
+    })
+
+    // 注入 i18n 字符串 - 在 DOM 准备好之前注入
+    screenshotSelectorWindow.webContents.on('dom-ready', () => {
+      screenshotSelectorWindow?.webContents.executeJavaScript(`
+        window.__SCREENSHOT_I18N__ = ${JSON.stringify(i18nStrings)};
+        if (window.smScreenshotSelector) {
+          window.smScreenshotSelector.i18n = window.__SCREENSHOT_I18N__;
+        }
+      `)
+    })
+
+    screenshotSelectorWindow.once('ready-to-show', () => {
+      screenshotSelectorWindow?.show()
+      screenshotSelectorWindow?.focus()
+    })
+
+    screenshotSelectorWindow.on('closed', () => {
+      screenshotSelectorWindow = null
+      // 恢复主窗口
+      if (wasVisible && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show()
+      }
+      // 如果没有收到结果，返回 null
+      if (screenshotResolve) {
+        screenshotResolve(null)
+        screenshotResolve = null
+      }
+    })
+
+    screenshotSelectorWindow.loadFile(getScreenshotSelectorHtmlPath())
+  })
+}
+
+function closeScreenshotSelector(result: { type: 'region' | 'window' | 'fullscreen'; data: Buffer } | null) {
+  if (screenshotResolve) {
+    screenshotResolve(result)
+    screenshotResolve = null
+  }
+  if (screenshotSelectorWindow && !screenshotSelectorWindow.isDestroyed()) {
+    screenshotSelectorWindow.close()
+    screenshotSelectorWindow = null
+  }
 }
 
 function sendMenuCommand(win: BrowserWindow | null, cmd: MenuCommand) {
@@ -1080,10 +1254,14 @@ function buildAppMenu(winGetter: () => BrowserWindow | null) {
         }
       },
       {
-        label: '切换深色/浅色（跟随系统）',
-        accelerator: accel('Ctrl+Alt+L', 'Cmd+Alt+L'),
+        label: '切换深色/浅色',
+        accelerator: accel('Ctrl+L', 'Cmd+L'),
         click: () => {
-          nativeTheme.themeSource = nativeTheme.shouldUseDarkColors ? 'light' : 'dark'
+          // 根据当前实际显示的主题来切换
+          const isDark = nativeTheme.shouldUseDarkColors
+          const nextTheme: 'light' | 'dark' = isDark ? 'light' : 'dark'
+          const next = sanitizeSettings(mergeSettings(appSettings, { theme: nextTheme }))
+          applyAppSettings(next)
         }
       }
     ]
@@ -1530,6 +1708,23 @@ async function createMainWindow() {
     mainWindow?.show()
   })
 
+  // 处理 renderer 的 beforeunload 阻止关闭：显示确认对话框
+  mainWindow.webContents.on('will-prevent-unload', (event) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'question',
+      buttons: ['离开', '取消'],
+      title: '确认退出',
+      message: '有未保存的更改，确定要离开吗？',
+      defaultId: 0,
+      cancelId: 1
+    })
+    if (choice === 0) {
+      // 用户选择"离开"：取消阻止，允许关闭
+      event.preventDefault()
+    }
+  })
+
   const devUrl = process.env.VITE_DEV_SERVER_URL
   if (devUrl) {
     await mainWindow.loadURL(devUrl)
@@ -1724,19 +1919,15 @@ app.whenReady().then(async () => {
     if (!req || typeof req !== 'object' || typeof req.docPath !== 'string' || req.docPath.length === 0) return null
 
     try {
+      // 先尝试调用 desktopCapturer.getSources() 触发系统权限请求
       const primary = screen.getPrimaryDisplay()
-      const primaryId = String(primary.id)
       const size = primary.size
-
-      // 先尝试调用 desktopCapturer.getSources()
-      // 这会触发系统将应用添加到屏幕录制权限列表中（即使没有权限也会添加）
-      const sources = await desktopCapturer.getSources({
+      await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: { width: size.width, height: size.height }
       })
 
-      // macOS: 调用 API 后再检查权限状态
-      // 如果没有授权，此时应用已经被添加到系统设置列表中，用户只需要打开开关
+      // macOS: 检查权限状态
       if (isMac) {
         const status = systemPreferences.getMediaAccessStatus('screen')
         if (status !== 'granted') {
@@ -1790,25 +1981,115 @@ app.whenReady().then(async () => {
             cancelId: 1
           })
           if (result.response === 0) {
-            // 打开 macOS 系统设置的屏幕录制页面
             shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
           }
           return null
         }
       }
 
-      const picked =
-        sources.find((s) => String((s as unknown as { display_id?: string }).display_id) === primaryId) ??
-        sources.find((s) => s.id.includes(primaryId)) ??
-        sources[0]
-      if (!picked) return null
-      const png = picked.thumbnail.toPNG()
-      if (!png || png.length === 0) return null
-      const ab = png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength)
+      // 打开截图选择器
+      const result = await openScreenshotSelector()
+      if (!result) return null
+
+      const ab = result.data.buffer.slice(result.data.byteOffset, result.data.byteOffset + result.data.byteLength)
       return await saveBufferAsImage({ ...req, data: ab, mime: 'image/png', nameHint: req.nameHint || `screenshot-${tsName()}.png` })
     } catch {
       return null
     }
+  })
+
+  // ===== Screenshot Selector IPC handlers =====
+  ipcMain.handle('screenshot-selector:getDisplayInfo', async () => {
+    const display = screen.getPrimaryDisplay()
+    return {
+      width: display.size.width,
+      height: display.size.height,
+      scaleFactor: display.scaleFactor
+    }
+  })
+
+  ipcMain.handle('screenshot-selector:captureRegion', async (_evt, rect: { x: number; y: number; width: number; height: number }) => {
+    try {
+      const display = screen.getPrimaryDisplay()
+      const { width, height } = display.size
+      
+      // 获取全屏截图
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width, height }
+      })
+      
+      const source = sources[0]
+      if (!source) {
+        closeScreenshotSelector(null)
+        return
+      }
+      
+      // 裁剪区域
+      const fullImage = source.thumbnail
+      const cropped = fullImage.crop({
+        x: Math.max(0, Math.round(rect.x)),
+        y: Math.max(0, Math.round(rect.y)),
+        width: Math.min(rect.width, width - rect.x),
+        height: Math.min(rect.height, height - rect.y)
+      })
+      
+      const png = cropped.toPNG()
+      closeScreenshotSelector({ type: 'region', data: png })
+    } catch (err) {
+      console.error('captureRegion error:', err)
+      closeScreenshotSelector(null)
+    }
+  })
+
+  ipcMain.handle('screenshot-selector:captureWindow', async (_evt, sourceId: string) => {
+    try {
+      // 获取指定窗口的高质量截图
+      const sources = await desktopCapturer.getSources({
+        types: ['window', 'screen'],
+        thumbnailSize: { width: 1920, height: 1080 }
+      })
+      
+      const source = sources.find(s => s.id === sourceId)
+      if (!source) {
+        closeScreenshotSelector(null)
+        return
+      }
+      
+      const png = source.thumbnail.toPNG()
+      closeScreenshotSelector({ type: 'window', data: png })
+    } catch (err) {
+      console.error('captureWindow error:', err)
+      closeScreenshotSelector(null)
+    }
+  })
+
+  ipcMain.handle('screenshot-selector:captureFullscreen', async () => {
+    try {
+      const display = screen.getPrimaryDisplay()
+      const { width, height } = display.size
+      
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width, height }
+      })
+      
+      const source = sources[0]
+      if (!source) {
+        closeScreenshotSelector(null)
+        return
+      }
+      
+      const png = source.thumbnail.toPNG()
+      closeScreenshotSelector({ type: 'fullscreen', data: png })
+    } catch (err) {
+      console.error('captureFullscreen error:', err)
+      closeScreenshotSelector(null)
+    }
+  })
+
+  ipcMain.handle('screenshot-selector:cancel', async () => {
+    closeScreenshotSelector(null)
   })
 
   ipcMain.handle('app:quit', async () => {

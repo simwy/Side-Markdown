@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+  <title>Screenshot Selector</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    }
+
+    .container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    /* 背景截图 */
+    .background-image {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-size: cover;
+      background-position: center;
+      filter: brightness(0.5);
+    }
+
+    /* 遮罩层 */
+    .overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.4);
+      cursor: crosshair;
+    }
+
+    /* 选择框 */
+    .selection-box {
+      position: absolute;
+      border: 2px solid #00d4ff;
+      background: transparent;
+      pointer-events: none;
+      display: none;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+    }
+
+    .selection-box.active {
+      display: block;
+    }
+
+    /* 选中区域的亮显 */
+    .selection-box::before {
+      content: '';
+      position: absolute;
+      top: -2px;
+      left: -2px;
+      right: -2px;
+      bottom: -2px;
+      border: 1px dashed rgba(255, 255, 255, 0.5);
+    }
+
+    /* 尺寸标签 */
+    .size-label {
+      position: absolute;
+      background: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      pointer-events: none;
+      display: none;
+    }
+
+    .size-label.active {
+      display: block;
+    }
+
+    /* 顶部工具栏 */
+    .toolbar {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      padding: 8px 16px;
+      background: rgba(30, 30, 30, 0.95);
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      z-index: 1000;
+    }
+
+    .toolbar-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .toolbar-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .toolbar-btn.active {
+      background: #00d4ff;
+      color: #000;
+    }
+
+    .toolbar-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .toolbar-divider {
+      width: 1px;
+      background: rgba(255, 255, 255, 0.2);
+      margin: 0 4px;
+    }
+
+    /* 窗口列表 */
+    .window-list {
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding: 20px;
+      background: rgba(30, 30, 30, 0.95);
+      border-radius: 12px;
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+      max-width: 90vw;
+      max-height: calc(100vh - 160px);
+      overflow-y: auto;
+      z-index: 999;
+      justify-content: center;
+    }
+
+    .window-list.active {
+      display: flex;
+    }
+
+    .window-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      width: 200px;
+    }
+
+    .window-item:hover {
+      background: rgba(255, 255, 255, 0.15);
+      transform: scale(1.02);
+    }
+
+    .window-item.selected {
+      background: rgba(0, 212, 255, 0.3);
+      outline: 2px solid #00d4ff;
+    }
+
+    .window-thumbnail {
+      width: 180px;
+      height: 120px;
+      object-fit: contain;
+      border-radius: 4px;
+      background: #000;
+      margin-bottom: 8px;
+    }
+
+    .window-name {
+      color: #fff;
+      font-size: 12px;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 180px;
+    }
+
+    /* 底部提示 */
+    .hint {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      background: rgba(30, 30, 30, 0.9);
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 13px;
+      z-index: 1000;
+    }
+
+    .hint kbd {
+      display: inline-block;
+      padding: 2px 6px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+      font-family: inherit;
+      margin: 0 2px;
+    }
+
+    /* 确认/取消按钮组 */
+    .action-buttons {
+      position: fixed;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      gap: 12px;
+      z-index: 1001;
+    }
+
+    .action-buttons.active {
+      display: flex;
+    }
+
+    .action-btn {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .action-btn.confirm {
+      background: #00d4ff;
+      color: #000;
+    }
+
+    .action-btn.confirm:hover {
+      background: #00b8e0;
+    }
+
+    .action-btn.cancel {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
+    .action-btn.cancel:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    /* 加载状态 */
+    .loading {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #fff;
+      font-size: 16px;
+      z-index: 2000;
+    }
+
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #00d4ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="background-image" id="bgImage"></div>
+    <div class="overlay" id="overlay"></div>
+    <div class="selection-box" id="selectionBox"></div>
+    <div class="size-label" id="sizeLabel"></div>
+    
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-btn active" data-mode="region" id="btnRegion">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M9 3v18M15 3v18M3 9h18M3 15h18"/>
+        </svg>
+        <span data-i18n="mode.region">区域选择</span>
+      </button>
+      <button class="toolbar-btn" data-mode="window" id="btnWindow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="4" width="20" height="16" rx="2"/>
+          <path d="M2 8h20"/>
+          <circle cx="5" cy="6" r="1" fill="currentColor"/>
+          <circle cx="8" cy="6" r="1" fill="currentColor"/>
+        </svg>
+        <span data-i18n="mode.window">窗口选择</span>
+      </button>
+      <button class="toolbar-btn" data-mode="fullscreen" id="btnFullscreen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="2" width="20" height="20" rx="2"/>
+          <path d="M9 2v6H3M15 2v6h6M9 22v-6H3M15 22v-6h6"/>
+        </svg>
+        <span data-i18n="mode.fullscreen">全屏截图</span>
+      </button>
+      <div class="toolbar-divider"></div>
+      <button class="toolbar-btn" id="btnCancel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+        <span data-i18n="cancel">取消</span>
+      </button>
+    </div>
+
+    <div class="window-list" id="windowList"></div>
+
+    <div class="action-buttons" id="actionButtons">
+      <button class="action-btn cancel" id="actionCancel" data-i18n="cancel">取消</button>
+      <button class="action-btn confirm" id="actionConfirm" data-i18n="confirm">确认截图</button>
+    </div>
+
+    <div class="hint" id="hint">
+      <span data-i18n="hint.region">拖动鼠标选择截图区域，按 <kbd>Esc</kbd> 取消</span>
+    </div>
+
+    <div class="loading" id="loading" style="display: none;">
+      <div class="loading-spinner"></div>
+      <div data-i18n="loading">加载中...</div>
+    </div>
+  </div>
+
+  <script>
+    // i18n strings - will be updated by main process injection
+    let i18n = {
+      'mode.region': '区域选择',
+      'mode.window': '窗口选择',
+      'mode.fullscreen': '全屏截图',
+      'cancel': '取消',
+      'confirm': '确认截图',
+      'hint.region': '拖动鼠标选择截图区域，按 Esc 取消',
+      'hint.window': '点击选择要截取的窗口',
+      'hint.fullscreen': '点击确认截取整个屏幕',
+      'loading': '加载中...',
+      'window.screen': '屏幕'
+    };
+    
+    // Update i18n from injected strings
+    function updateI18n() {
+      if (window.__SCREENSHOT_I18N__) {
+        i18n = { ...i18n, ...window.__SCREENSHOT_I18N__ };
+      } else if (window.smScreenshotSelector?.i18n) {
+        i18n = { ...i18n, ...window.smScreenshotSelector.i18n };
+      }
+    }
+
+    // State
+    let mode = 'region'; // 'region' | 'window' | 'fullscreen'
+    let isSelecting = false;
+    let startX = 0, startY = 0;
+    let currentX = 0, currentY = 0;
+    let selectedWindow = null;
+    let windowSources = [];
+    let screenSources = [];
+    let fullScreenshot = null;
+    let scaleFactor = 1;
+
+    // DOM elements
+    const bgImage = document.getElementById('bgImage');
+    const overlay = document.getElementById('overlay');
+    const selectionBox = document.getElementById('selectionBox');
+    const sizeLabel = document.getElementById('sizeLabel');
+    const toolbar = document.getElementById('toolbar');
+    const windowList = document.getElementById('windowList');
+    const actionButtons = document.getElementById('actionButtons');
+    const hint = document.getElementById('hint');
+    const loading = document.getElementById('loading');
+    const btnRegion = document.getElementById('btnRegion');
+    const btnWindow = document.getElementById('btnWindow');
+    const btnFullscreen = document.getElementById('btnFullscreen');
+    const btnCancel = document.getElementById('btnCancel');
+    const actionCancel = document.getElementById('actionCancel');
+    const actionConfirm = document.getElementById('actionConfirm');
+
+    // Apply i18n
+    function applyI18n() {
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (i18n[key]) {
+          el.textContent = i18n[key];
+        }
+      });
+    }
+
+    // Initialize
+    async function init() {
+      // Wait a bit for i18n injection
+      await new Promise(resolve => setTimeout(resolve, 50));
+      updateI18n();
+      applyI18n();
+      loading.style.display = 'block';
+      
+      try {
+        // Get display info from main process
+        const displayInfo = await window.smScreenshotSelector.getDisplayInfo();
+        scaleFactor = displayInfo.scaleFactor || 1;
+        
+        // Get full screen screenshot
+        const screenshotData = await window.smScreenshotSelector.getFullScreenshot();
+        fullScreenshot = screenshotData.dataUrl;
+        bgImage.style.backgroundImage = `url(${fullScreenshot})`;
+        
+        // Get window sources
+        const sources = await window.smScreenshotSelector.getSources();
+        windowSources = sources.windows || [];
+        screenSources = sources.screens || [];
+        
+        loading.style.display = 'none';
+        updateMode('region');
+      } catch (err) {
+        console.error('Init error:', err);
+        loading.textContent = 'Error: ' + err.message;
+      }
+    }
+
+    // Update mode
+    function updateMode(newMode) {
+      mode = newMode;
+      
+      // Update toolbar buttons
+      document.querySelectorAll('.toolbar-btn[data-mode]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+      });
+      
+      // Reset selection
+      selectionBox.classList.remove('active');
+      sizeLabel.classList.remove('active');
+      actionButtons.classList.remove('active');
+      selectedWindow = null;
+      
+      // Update UI based on mode
+      if (mode === 'region') {
+        windowList.classList.remove('active');
+        overlay.style.cursor = 'crosshair';
+        overlay.style.pointerEvents = 'auto';
+        hint.querySelector('span').textContent = i18n['hint.region'];
+      } else if (mode === 'window') {
+        windowList.classList.add('active');
+        overlay.style.cursor = 'default';
+        overlay.style.pointerEvents = 'none';
+        hint.querySelector('span').textContent = i18n['hint.window'];
+        renderWindowList();
+      } else if (mode === 'fullscreen') {
+        windowList.classList.remove('active');
+        overlay.style.cursor = 'default';
+        overlay.style.pointerEvents = 'auto';
+        hint.querySelector('span').textContent = i18n['hint.fullscreen'];
+        actionButtons.classList.add('active');
+      }
+    }
+
+    // Render window list
+    function renderWindowList() {
+      windowList.innerHTML = '';
+      
+      // Add screens first
+      screenSources.forEach(source => {
+        const item = document.createElement('div');
+        item.className = 'window-item';
+        item.innerHTML = `
+          <img class="window-thumbnail" src="${source.thumbnail}" alt="${source.name}">
+          <div class="window-name">${source.name || i18n['window.screen']}</div>
+        `;
+        item.addEventListener('click', () => selectWindow(source, item));
+        windowList.appendChild(item);
+      });
+      
+      // Add windows
+      windowSources.forEach(source => {
+        const item = document.createElement('div');
+        item.className = 'window-item';
+        item.innerHTML = `
+          <img class="window-thumbnail" src="${source.thumbnail}" alt="${source.name}">
+          <div class="window-name">${source.name}</div>
+        `;
+        item.addEventListener('click', () => selectWindow(source, item));
+        windowList.appendChild(item);
+      });
+    }
+
+    // Select window
+    function selectWindow(source, element) {
+      document.querySelectorAll('.window-item').forEach(el => el.classList.remove('selected'));
+      element.classList.add('selected');
+      selectedWindow = source;
+      actionButtons.classList.add('active');
+    }
+
+    // Region selection handlers
+    overlay.addEventListener('mousedown', (e) => {
+      if (mode !== 'region') return;
+      
+      isSelecting = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      currentX = startX;
+      currentY = startY;
+      
+      selectionBox.classList.add('active');
+      updateSelectionBox();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isSelecting) return;
+      
+      currentX = e.clientX;
+      currentY = e.clientY;
+      updateSelectionBox();
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (!isSelecting) return;
+      
+      isSelecting = false;
+      currentX = e.clientX;
+      currentY = e.clientY;
+      updateSelectionBox();
+      
+      // Show action buttons if selection is valid
+      const width = Math.abs(currentX - startX);
+      const height = Math.abs(currentY - startY);
+      if (width > 10 && height > 10) {
+        actionButtons.classList.add('active');
+      }
+    });
+
+    function updateSelectionBox() {
+      const left = Math.min(startX, currentX);
+      const top = Math.min(startY, currentY);
+      const width = Math.abs(currentX - startX);
+      const height = Math.abs(currentY - startY);
+      
+      selectionBox.style.left = left + 'px';
+      selectionBox.style.top = top + 'px';
+      selectionBox.style.width = width + 'px';
+      selectionBox.style.height = height + 'px';
+      
+      // Update size label
+      if (width > 0 && height > 0) {
+        sizeLabel.classList.add('active');
+        const realW = Math.round(width * scaleFactor);
+        const realH = Math.round(height * scaleFactor);
+        sizeLabel.textContent = `${realW} × ${realH}`;
+        sizeLabel.style.left = (left + width / 2 - 30) + 'px';
+        sizeLabel.style.top = (top + height + 10) + 'px';
+      }
+    }
+
+    // Button handlers
+    btnRegion.addEventListener('click', () => updateMode('region'));
+    btnWindow.addEventListener('click', () => updateMode('window'));
+    btnFullscreen.addEventListener('click', () => updateMode('fullscreen'));
+    
+    btnCancel.addEventListener('click', cancel);
+    actionCancel.addEventListener('click', cancel);
+    actionConfirm.addEventListener('click', confirm);
+
+    // Keyboard handler
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        cancel();
+      } else if (e.key === 'Enter') {
+        confirm();
+      }
+    });
+
+    async function cancel() {
+      await window.smScreenshotSelector.cancel();
+    }
+
+    async function confirm() {
+      loading.style.display = 'block';
+      
+      try {
+        if (mode === 'region') {
+          const left = Math.min(startX, currentX);
+          const top = Math.min(startY, currentY);
+          const width = Math.abs(currentX - startX);
+          const height = Math.abs(currentY - startY);
+          
+          if (width < 10 || height < 10) {
+            loading.style.display = 'none';
+            return;
+          }
+          
+          await window.smScreenshotSelector.captureRegion({
+            x: Math.round(left * scaleFactor),
+            y: Math.round(top * scaleFactor),
+            width: Math.round(width * scaleFactor),
+            height: Math.round(height * scaleFactor)
+          });
+        } else if (mode === 'window') {
+          if (!selectedWindow) {
+            loading.style.display = 'none';
+            return;
+          }
+          await window.smScreenshotSelector.captureWindow(selectedWindow.id);
+        } else if (mode === 'fullscreen') {
+          await window.smScreenshotSelector.captureFullscreen();
+        }
+      } catch (err) {
+        console.error('Capture error:', err);
+        loading.style.display = 'none';
+      }
+    }
+
+    // Start initialization
+    init();
+  </script>
+</body>
+</html>

@@ -35,7 +35,9 @@ function parseProvider(v: unknown, defaultValue: AnalyticsProviderMode): Analyti
 
 export const ANALYTICS_ENV_IDS = {
   baiduSiteId: trimOrEmpty(import.meta.env.VITE_BAIDU_SITE_ID),
-  googleMeasurementId: trimOrEmpty(import.meta.env.VITE_GA_MEASUREMENT_ID)
+  googleMeasurementId: trimOrEmpty(import.meta.env.VITE_GA_MEASUREMENT_ID),
+  // GA4 Measurement Protocol requires an API Secret (create in GA4 Admin > Data Streams > your stream > Measurement Protocol API secrets)
+  googleApiSecret: trimOrEmpty(import.meta.env.VITE_GA_API_SECRET)
 } as const
 
 export const ANALYTICS_ENV = {

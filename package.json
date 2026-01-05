@@ -83,6 +83,7 @@
     "files": [
       "dist/**",
       "dist-electron/**",
+      "electron/screenshot-selector.html",
       "package.json"
     ],
     "mac": {
