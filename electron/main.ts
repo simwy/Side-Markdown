@@ -365,11 +365,15 @@ async function openScreenshotSelector(): Promise<{ type: 'region' | 'window' | '
       height: screenshotDisplayBounds!.height,
       frame: false,
       transparent: true,
-      alwaysOnTop: true,
       skipTaskbar: true,
       resizable: false,
       movable: false,
-      fullscreen: true,
+      hasShadow: false,
+      // macOS: 不使用 fullscreen/simpleFullscreen，它们会导致黑屏或白屏
+      // 改用窗口覆盖整个屏幕 + 高层级 alwaysOnTop 实现类似效果
+      fullscreen: !isMac,
+      enableLargerThanScreen: isMac,
+      visibleOnAllWorkspaces: isMac,
       show: false,
       webPreferences: {
         preload: getScreenshotSelectorPreloadPath(),
@@ -378,6 +382,13 @@ async function openScreenshotSelector(): Promise<{ type: 'region' | 'window' | '
         sandbox: false // 需要访问 desktopCapturer
       }
     })
+
+    // macOS: 设置高层级的 alwaysOnTop，确保窗口在所有窗口之上（包括菜单栏）
+    if (isMac) {
+      screenshotSelectorWindow.setAlwaysOnTop(true, 'screen-saver', 1)
+    } else {
+      screenshotSelectorWindow.setAlwaysOnTop(true, 'floating')
+    }
 
     // 注入 i18n 字符串 - 在 DOM 准备好之前注入
     screenshotSelectorWindow.webContents.on('dom-ready', () => {
@@ -433,7 +444,15 @@ const GITHUB_REPO = 'Side-Markdown'
 
 let updateState: UpdateState = {
   status: 'idle',
-  currentVersion: '0.0.0'
+  // Prefer the real app version as early as possible so the macOS menu doesn't
+  // momentarily show "v0.0.0" before auto-updater initialization runs.
+  currentVersion: (() => {
+    try {
+      return app.getVersion()
+    } catch {
+      return '0.0.0'
+    }
+  })()
 }
 let updateInstallRequested = false
 
@@ -558,11 +577,12 @@ async function preflightGithubReleaseAssets() {
 }
 
 function getUpdateMenuLabel(locale: Locale = appSettings.locale) {
+  const currentVersion = updateState.currentVersion && updateState.currentVersion !== '0.0.0' ? updateState.currentVersion : app.getVersion()
   const v = updateState.availableVersion ? ` v${updateState.availableVersion}` : ''
   const hasDot = updateState.status === 'available' || updateState.status === 'downloaded'
   const dot = hasDot ? ' ●' : ''
   // 系统菜单中只展示版本项；当有新版本时在版本号后加红点提示（用 ● 字符）
-  return `${versionLabel(locale)} v${updateState.currentVersion}${dot}${hasDot ? v : ''}`
+  return `${versionLabel(locale)} v${currentVersion}${dot}${hasDot ? v : ''}`
 }
 
 function syncUpdateMenuState() {
@@ -1799,8 +1819,10 @@ app.whenReady().then(async () => {
     if (paths.length > 0) pendingOpenFilePaths.push(...paths)
   }
 
-  await createMainWindow()
+  // Initialize updater state BEFORE building the menu so the first render uses the real version.
   initAutoUpdater()
+
+  await createMainWindow()
 
   // ===== Protocols =====
   protocol.registerFileProtocol('smfile', (request, callback) => {
