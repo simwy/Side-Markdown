@@ -84,6 +84,8 @@ export function MarkdownToolbar(props: {
   locale: Locale
   layout?: 'horizontal' | 'vertical'
   variant?: 'text' | 'icon'
+  onInsertImage?: (view: EditorView) => void | Promise<void>
+  onInsertScreenshot?: (view: EditorView) => void | Promise<void>
 }) {
   const view = props.view
   const locale = props.locale
@@ -112,7 +114,29 @@ export function MarkdownToolbar(props: {
     { key: 'md.ol', icon: <IconOrderedList />, run: (v) => prefixSelectedLines(v, (i) => `${i + 1}. `) },
     { key: 'md.task', icon: <IconTaskList />, run: (v) => prefixSelectedLines(v, () => '- [ ] ') },
     { key: 'md.link', icon: <IconLink />, run: (v) => wrapSelectionOrInsert(v, '[', '](https://)', 'text') },
-    { key: 'md.image', icon: <IconImage />, run: (v) => wrapSelectionOrInsert(v, '![', '](https://)', 'alt') },
+    {
+      key: 'md.screenshot',
+      icon: <IconImage />,
+      run: (v) => {
+        if (props.onInsertScreenshot) {
+          void props.onInsertScreenshot(v)
+          return
+        }
+        // fallback: behave like inserting image syntax
+        wrapSelectionOrInsert(v, '![', '](https://)', 'alt')
+      }
+    },
+    {
+      key: 'md.image',
+      icon: <IconImage />,
+      run: (v) => {
+        if (props.onInsertImage) {
+          void props.onInsertImage(v)
+          return
+        }
+        wrapSelectionOrInsert(v, '![', '](https://)', 'alt')
+      }
+    },
     {
       key: 'md.table',
       icon: <IconTable />,

@@ -3,8 +3,10 @@ import type {
   AppSettings,
   ExportRequest,
   ExportResponse,
+  ImageImportRequest,
   MenuCommand,
   OpenedFile,
+  SavedImage,
   SaveFileRequest,
   SaveFileResponse,
   SessionState,
@@ -20,6 +22,13 @@ export type ElectronAPI = {
   exportHtml: (req: ExportRequest) => Promise<ExportResponse | null>
   exportPdf: (req: ExportRequest) => Promise<ExportResponse | null>
   exportWord: (req: ExportRequest) => Promise<ExportResponse | null>
+  imagePickAndSave: (req: ImageImportRequest & { allowMulti?: boolean }) => Promise<SavedImage[] | null>
+  imageImportFromPaths: (req: ImageImportRequest & { filePaths: string[] }) => Promise<SavedImage[]>
+  imageSaveFromBuffer: (
+    req: ImageImportRequest & { data: ArrayBuffer; mime?: string; nameHint?: string }
+  ) => Promise<SavedImage>
+  imageSaveFromClipboard: (req: ImageImportRequest & { nameHint?: string }) => Promise<SavedImage | null>
+  screenshotCaptureAndSave: (req: ImageImportRequest & { nameHint?: string }) => Promise<SavedImage | null>
   quit: () => Promise<void>
   onMenuCommand: (handler: (cmd: MenuCommand) => void) => () => void
   onOpenedFiles: (handler: (files: OpenedFile[]) => void) => () => void
@@ -57,6 +66,11 @@ const api: ElectronAPI = {
   exportHtml: (req) => ipcRenderer.invoke('export:html', req),
   exportPdf: (req) => ipcRenderer.invoke('export:pdf', req),
   exportWord: (req) => ipcRenderer.invoke('export:word', req),
+  imagePickAndSave: (req) => ipcRenderer.invoke('image:pickAndSave', req),
+  imageImportFromPaths: (req) => ipcRenderer.invoke('image:importFromPaths', req),
+  imageSaveFromBuffer: (req) => ipcRenderer.invoke('image:saveFromBuffer', req),
+  imageSaveFromClipboard: (req) => ipcRenderer.invoke('image:saveFromClipboard', req),
+  screenshotCaptureAndSave: (req) => ipcRenderer.invoke('screenshot:captureAndSave', req),
   quit: () => ipcRenderer.invoke('app:quit'),
   onMenuCommand: (handler) => {
     const listener = (_evt: Electron.IpcRendererEvent, cmd: MenuCommand) => handler(cmd)

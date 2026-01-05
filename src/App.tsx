@@ -17,6 +17,8 @@ import { TocPane, type TocItem } from './components/TocPane'
 import { IconChevronLeft, IconChevronRight } from './components/icons/PanelIcons'
 import { renderMarkdownToSafeHtml } from './markdown'
 import { t } from './i18n'
+import { getAnalyticsProvider, initAnalytics, trackEvent } from './analytics'
+import { ANALYTICS_ENV, ANALYTICS_ENV_IDS } from './env'
 
 function guessKindFromName(name: string): 'text' | 'markdown' {
   const n = name.toLowerCase()
@@ -127,6 +129,12 @@ export function App() {
   const [previewMode, setPreviewMode] = useState<PreviewMode>('edit')
   const [showToc, setShowToc] = useState(true)
   const [pendingJump, setPendingJump] = useState<TocItem | null>(null)
+  // Mirror into refs so we can react to "editor view becomes ready" without relying on effect deps.
+  const pendingJumpRef = useRef<TocItem | null>(null)
+  const pendingJumpInFlightRef = useRef(false)
+  const previewModeRef = useRef<PreviewMode>('edit')
+  const isMarkdownRef = useRef(false)
+  const activeTabRef = useRef<DocTab | null>(null)
   const [tocMaxDepth, setTocMaxDepth] = useState<number>(6)
   const [font, setFont] = useState<EditorFont>({
     family: 'ui-monospace',
@@ -141,6 +149,22 @@ export function App() {
 
   const activeTab = useMemo(() => tabs.find((t) => t.id === activeId) ?? tabs[0], [tabs, activeId])
   const editorViewRef = useRef<EditorView | null>(null)
+  // NOTE: refs don't trigger re-render; keep a tiny piece of state for UI enabling (toolbar, etc).
+  const [editorView, setEditorView] = useState<EditorView | null>(null)
+  // Keep refs in sync with state (for callbacks that must stay stable).
+  useEffect(() => {
+    pendingJumpRef.current = pendingJump
+  }, [pendingJump])
+  useEffect(() => {
+    previewModeRef.current = previewMode
+  }, [previewMode])
+  useEffect(() => {
+    isMarkdownRef.current = activeTab?.kind === 'markdown'
+  }, [activeTab?.kind])
+  useEffect(() => {
+    activeTabRef.current = activeTab ?? null
+  }, [activeTab])
+
   const editorScrollSyncCleanupRef = useRef<null | (() => void)>(null)
   const editorScrollSyncRafRef = useRef<number | null>(null)
   const saveSessionTimerRef = useRef<number | null>(null)
@@ -177,6 +201,16 @@ export function App() {
     unsub = window.electronAPI.onUpdateState((s) => setUpd(s))
     return () => unsub()
   }, [])
+
+  // ===== Analytics init (Baidu CN / Google non-CN) =====
+  useEffect(() => {
+    // IDs are sourced from Vite env (.env) only.
+    initAnalytics({
+      settings: { ...ANALYTICS_ENV, ...ANALYTICS_ENV_IDS },
+      locale,
+      appVersion
+    })
+  }, [locale, appVersion])
 
   useEffect(() => {
     return window.electronAPI.onWindowDockMode((mode) => setDockMode(mode))
@@ -263,6 +297,7 @@ export function App() {
     const opened = await window.electronAPI.openFiles()
     if (opened.length === 0) return
     addOpenedFiles(opened)
+    trackEvent('file_open', { source: 'dialog', count: opened.length })
   }
 
   const addOpenedFiles = useCallback((opened: Array<{ path?: string; name: string; encoding: DocTab['encoding']; content: string }>) => {
@@ -320,6 +355,13 @@ export function App() {
       }
     }
 
+    const isImageFile = (f: File) => {
+      const name = String(f.name || '').toLowerCase()
+      const type = String(f.type || '').toLowerCase()
+      if (type.startsWith('image/')) return true
+      return /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name)
+    }
+
     const onDragOver = (e: DragEvent) => {
       const dt = e.dataTransfer
       // 只有“文件拖入”才阻止默认行为；否则保留编辑器的正常拖拽/粘贴体验
@@ -348,6 +390,7 @@ export function App() {
       }
 
       const fileList = Array.from(dt.files ?? [])
+      const allImages = fileList.length > 0 && fileList.every(isImageFile) && isMarkdownRef.current
       const pathsFromFiles = fileList
         .map((f) => (f as unknown as { path?: string }).path)
         .filter((p): p is string => typeof p === 'string' && p.length > 0)
@@ -362,11 +405,26 @@ export function App() {
         .filter((p): p is string => typeof p === 'string' && p.length > 0)
 
       const filePaths = [...pathsFromFiles, ...pathsFromUri]
+      // Markdown 图片拖拽：优先插入图片（而不是“打开文件”）
+      if (allImages) {
+        const v = editorViewRef.current
+        const pos = v ? v.posAtCoords({ x: e.clientX, y: e.clientY }) ?? undefined : undefined
+        const imgPaths = filePaths.filter((p) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p))
+        if (imgPaths.length > 0) {
+          void insertImages({ source: 'drop', filePaths: imgPaths, pos })
+          return
+        }
+        if (fileList.length > 0) {
+          void insertImages({ source: 'drop', files: fileList, pos })
+          return
+        }
+      }
       // 优先：能拿到真实路径则走主进程（编码识别更准确 & 可保留原路径用于保存）
       if (filePaths.length > 0) {
         const opened = await window.electronAPI.openFilePaths(filePaths)
         if (opened.length === 0) return
         addOpenedFiles(opened)
+        trackEvent('file_open', { source: 'drag', count: opened.length })
         return
       }
 
@@ -379,6 +437,7 @@ export function App() {
         })
       )
       addOpenedFiles(openedFallback)
+      trackEvent('file_open', { source: 'drag_fallback', count: openedFallback.length })
     }
 
     // 用 capture 更稳：避免某些控件（如编辑器）先接到 drop 导致页面导航/插入异常
@@ -392,27 +451,73 @@ export function App() {
     }
   }, [addOpenedFiles])
 
-  const saveActive = async (forceSaveAs: boolean) => {
-    if (!activeTab) {
-      setShowNoFileDialog(true)
-      return
+  // Paste screenshot / clipboard images into markdown (save to assets + insert link)
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (!isMarkdownRef.current) return
+      const v = editorViewRef.current
+      if (!v) return
+
+      const target = e.target
+      if (target instanceof Node && !v.dom.contains(target)) return
+
+      const dt = e.clipboardData
+      if (!dt) return
+
+      const items = Array.from(dt.items ?? [])
+      const files = items
+        .filter((it) => it.kind === 'file' && String(it.type || '').toLowerCase().startsWith('image/'))
+        .map((it) => it.getAsFile())
+        .filter((f): f is File => !!f)
+
+      if (files.length > 0) {
+        e.preventDefault()
+        e.stopPropagation()
+        void insertImages({ source: 'paste', files })
+        return
+      }
+
+      // Fallback: if clipboard advertises image types but no File object (platform quirk)
+      const hasImageType = Array.from(dt.types ?? []).some((t) => String(t).toLowerCase().startsWith('image/'))
+      if (hasImageType) {
+        e.preventDefault()
+        e.stopPropagation()
+        void insertImages({ source: 'paste' })
+      }
     }
-    const t = activeTab
+
+    window.addEventListener('paste', onPaste, true)
+    return () => window.removeEventListener('paste', onPaste, true)
+  }, [])
+
+  const saveActive = async (forceSaveAs: boolean) => {
+    const t = activeTabRef.current
+    if (!t) {
+      setShowNoFileDialog(true)
+      return null
+    }
     const req = { path: t.path, nameHint: t.name, content: t.content, encoding: t.encoding }
     const res = forceSaveAs ? await window.electronAPI.saveFileAs(req) : await window.electronAPI.saveFile(req)
-    if (!res) return
+    if (!res) return null
+    trackEvent('file_save', {
+      saveAs: forceSaveAs,
+      hadPath: Boolean(t.path),
+      encoding: t.encoding,
+      kind: t.kind
+    })
     setTabs((prev) =>
       prev.map((x) =>
         x.id === t.id ? { ...x, path: res.path, name: res.name, dirty: false, kind: guessKindFromName(res.name) } : x
       )
     )
+    return res
   }
 
   const html = useMemo(() => {
     if (!activeTab) return ''
     if (activeTab.kind !== 'markdown') return ''
-    return renderMarkdownToSafeHtml(activeTab.content)
-  }, [activeTab?.kind, activeTab?.content])
+    return renderMarkdownToSafeHtml(activeTab.content, { basePath: activeTab.path })
+  }, [activeTab?.kind, activeTab?.content, activeTab?.path])
 
   const exportBodyHtml = useMemo(() => {
     if (!activeTab) return ''
@@ -430,6 +535,7 @@ export function App() {
     if (format === 'html') await window.electronAPI.exportHtml(req)
     if (format === 'pdf') await window.electronAPI.exportPdf(req)
     if (format === 'word') await window.electronAPI.exportWord(req)
+    trackEvent('export', { format, kind: activeTab.kind })
   }
 
   const syncPreviewScrollFromEditor = useCallback((view: EditorView) => {
@@ -449,9 +555,56 @@ export function App() {
     preview.scrollTop = ratio * previewMax
   }, [])
 
+  const jumpPreviewToHeading = useCallback((item: TocItem) => {
+    const root = document.querySelector('.preview-pane') as HTMLElement | null
+    if (!root) return
+    const wantedTag = `H${item.depth}`
+    const all = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6')) as HTMLElement[]
+    let count = 0
+    for (const el of all) {
+      if (el.tagName !== wantedTag) continue
+      if ((el.textContent ?? '').trim() !== item.text) continue
+      count += 1
+      if (count === item.ordinal) {
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        return
+      }
+    }
+  }, [])
+
+  const jumpEditorToLineInView = (v: EditorView, line1: number) => {
+    const safe = Math.max(1, Math.min(line1, v.state.doc.lines))
+    const line = v.state.doc.line(safe)
+    v.dispatch({ selection: { anchor: line.from }, scrollIntoView: true })
+    v.focus()
+  }
+
+  const tryRunPendingJump = (v: EditorView) => {
+    if (pendingJumpInFlightRef.current) return
+    const item = pendingJumpRef.current
+    if (!item) return
+    if (!isMarkdownRef.current) return
+    if (previewModeRef.current !== 'split') return
+
+    // Prevent duplicate scheduling (effect + onViewReady can race).
+    pendingJumpInFlightRef.current = true
+    pendingJumpRef.current = null
+
+    jumpEditorToLineInView(v, item.line1)
+    // Preview DOM in split mode may still be settling; wait 2 frames.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        jumpPreviewToHeading(item)
+        setPendingJump(null)
+        pendingJumpInFlightRef.current = false
+      })
+    })
+  }
+
   const handleEditorViewReady = useCallback(
     (v: EditorView | null) => {
       editorViewRef.current = v
+      setEditorView(v)
 
       if (editorScrollSyncCleanupRef.current) {
         editorScrollSyncCleanupRef.current()
@@ -481,6 +634,9 @@ export function App() {
 
       // 首次绑定时先同步一次（等预览 DOM ready 一帧更稳）
       requestAnimationFrame(() => syncPreviewScrollFromEditor(v))
+
+      // If TOC click triggered split while editor wasn't mounted yet, run the pending jump now.
+      tryRunPendingJump(v)
     },
     [syncPreviewScrollFromEditor]
   )
@@ -506,8 +662,155 @@ export function App() {
     view.focus()
   }
 
+  const ensureActiveDocPath = async (): Promise<string | null> => {
+    const t = activeTabRef.current
+    if (!t) return null
+    if (t.path) return t.path
+    const res = await saveActive(true)
+    return res?.path ?? null
+  }
+
+  const insertMarkdownAt = (view: EditorView, insert: string, pos?: number) => {
+    const p = typeof pos === 'number' && Number.isFinite(pos) ? pos : view.state.selection.main.from
+    view.dispatch({ changes: { from: p, to: p, insert }, selection: { anchor: p + insert.length } })
+    view.focus()
+  }
+
+  const insertImages = async (opts: {
+    source: 'picker' | 'drop' | 'paste'
+    filePaths?: string[]
+    files?: File[]
+    data?: ArrayBuffer
+    mime?: string
+    nameHint?: string
+    pos?: number
+  }) => {
+    const tab = activeTabRef.current
+    if (!tab || tab.kind !== 'markdown') return
+    const view = editorViewRef.current
+    if (!view) return
+    const docPath = await ensureActiveDocPath()
+    if (!docPath) return
+
+    if (opts.source === 'picker') {
+      const saved = await window.electronAPI.imagePickAndSave({ docPath, assetsDirName: 'assets', mode: 'relative', allowMulti: true })
+      if (!saved || saved.length === 0) return
+      const text = saved.map((x) => `![${x.fileName}](${x.link})`).join('\n') + '\n'
+      insertMarkdownAt(view, text, opts.pos)
+      return
+    }
+
+    if (opts.source === 'drop' && opts.filePaths && opts.filePaths.length > 0) {
+      const saved = await window.electronAPI.imageImportFromPaths({ docPath, assetsDirName: 'assets', mode: 'relative', filePaths: opts.filePaths })
+      if (!saved || saved.length === 0) return
+      const text = saved.map((x) => `![${x.fileName}](${x.link})`).join('\n') + '\n'
+      insertMarkdownAt(view, text, opts.pos)
+      return
+    }
+
+    if (opts.source === 'drop' && opts.files && opts.files.length > 0) {
+      const out: Array<{ fileName: string; link: string }> = []
+      for (const f of opts.files) {
+        const ab = await f.arrayBuffer()
+        const saved = await window.electronAPI.imageSaveFromBuffer({
+          docPath,
+          assetsDirName: 'assets',
+          mode: 'relative',
+          data: ab,
+          mime: f.type || opts.mime,
+          nameHint: f.name || opts.nameHint
+        })
+        out.push({ fileName: saved.fileName, link: saved.link })
+      }
+      if (out.length === 0) return
+      const text = out.map((x) => `![${x.fileName}](${x.link})`).join('\n') + '\n'
+      insertMarkdownAt(view, text, opts.pos)
+      return
+    }
+
+    if (opts.source === 'paste') {
+      // Prefer event-provided files/data; fallback to clipboard in main.
+      if (opts.files && opts.files.length > 0) {
+        const out: Array<{ fileName: string; link: string }> = []
+        for (const f of opts.files) {
+          const ab = await f.arrayBuffer()
+          const saved = await window.electronAPI.imageSaveFromBuffer({
+            docPath,
+            assetsDirName: 'assets',
+            mode: 'relative',
+            data: ab,
+            mime: f.type || opts.mime,
+            nameHint: f.name || opts.nameHint
+          })
+          out.push({ fileName: saved.fileName, link: saved.link })
+        }
+        if (out.length === 0) return
+        const text = out.map((x) => `![${x.fileName}](${x.link})`).join('\n') + '\n'
+        insertMarkdownAt(view, text, opts.pos)
+        return
+      }
+      if (opts.data) {
+        const saved = await window.electronAPI.imageSaveFromBuffer({
+          docPath,
+          assetsDirName: 'assets',
+          mode: 'relative',
+          data: opts.data,
+          mime: opts.mime,
+          nameHint: opts.nameHint
+        })
+        const text = `![${saved.fileName}](${saved.link})\n`
+        insertMarkdownAt(view, text, opts.pos)
+        return
+      }
+      const saved = await window.electronAPI.imageSaveFromClipboard({
+        docPath,
+        assetsDirName: 'assets',
+        mode: 'relative',
+        nameHint: opts.nameHint
+      })
+      if (!saved) return
+      const text = `![${saved.fileName}](${saved.link})\n`
+      insertMarkdownAt(view, text, opts.pos)
+      return
+    }
+  }
+
+  const insertScreenshot = async () => {
+    const tab = activeTabRef.current
+    if (!tab || tab.kind !== 'markdown') return
+    const view = editorViewRef.current
+    if (!view) return
+    const docPath = await ensureActiveDocPath()
+    if (!docPath) return
+    const saved = await window.electronAPI.screenshotCaptureAndSave({ docPath, assetsDirName: 'assets', mode: 'relative' })
+    if (!saved) return
+    insertMarkdownAt(view, `![${saved.fileName}](${saved.link})\n`)
+  }
+
   const handleMenu = (cmd: MenuCommand) => {
     switch (cmd.type) {
+      case 'analytics:triggerTest': {
+        const provider = getAnalyticsProvider()
+        trackEvent('analytics_test', {
+          source: 'menu',
+          provider,
+          ts: Date.now()
+        })
+        return
+      }
+      case 'analytics:version_menu_click': {
+        const provider = getAnalyticsProvider()
+        trackEvent('menu_version_click', {
+          source: 'menu',
+          provider,
+          locale: cmd.locale,
+          currentVersion: cmd.currentVersion,
+          updateStatus: cmd.updateStatus,
+          availableVersion: cmd.availableVersion,
+          ts: Date.now()
+        })
+        return
+      }
       case 'file:new':
         newTab()
         return
@@ -622,6 +925,7 @@ export function App() {
       if (cancelled) return
       if (opened.length === 0) return
       addOpenedFiles(opened)
+      trackEvent('file_open', { source: 'session', count: opened.length })
     })()
     return () => {
       cancelled = true
@@ -685,6 +989,7 @@ export function App() {
       { label: t(locale, 'new'), onClick: newTab },
       { label: t(locale, 'open'), onClick: () => void openFiles() },
       { label: t(locale, 'save'), onClick: () => void saveActive(false) },
+      { label: t(locale, 'saveAs'), onClick: () => void saveActive(true) },
       {
         label: t(locale, 'export'),
         children: [
@@ -711,34 +1016,17 @@ export function App() {
     setPreviewMode(nextEditor && nextPreview ? 'split' : nextEditor ? 'edit' : 'preview')
   }
 
-  const jumpPreviewToHeading = (item: TocItem) => {
-    const root = document.querySelector('.preview-pane') as HTMLElement | null
-    if (!root) return
-    const wantedTag = `H${item.depth}`
-    const all = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6')) as HTMLElement[]
-    let count = 0
-    for (const el of all) {
-      if (el.tagName !== wantedTag) continue
-      if ((el.textContent ?? '').trim() !== item.text) continue
-      count += 1
-      if (count === item.ordinal) {
-        el.scrollIntoView({ block: 'start', behavior: 'smooth' })
-        return
-      }
-    }
-  }
-
   const jumpEditorToLine = (line1: number) => {
-    dispatchToEditor((v) => {
-      const safe = Math.max(1, Math.min(line1, v.state.doc.lines))
-      const line = v.state.doc.line(safe)
-      v.dispatch({ selection: { anchor: line.from }, scrollIntoView: true })
-    })
+    const v = editorViewRef.current
+    if (!v) return
+    jumpEditorToLineInView(v, line1)
   }
 
   const jumpToHeading = (item: TocItem) => {
     // 目录点击：强制让右侧是「编辑器+预览」同时可见，然后两边一起跳转
     if (!isMarkdown) return
+    // Keep ref hot so onViewReady can act immediately even if state update hasn't flushed yet.
+    pendingJumpRef.current = item
     setPendingJump(item)
     if (previewMode !== 'split') setPreviewMode('split')
   }
@@ -753,15 +1041,9 @@ export function App() {
     // 等到 split 生效（确保 editor + preview 都存在）
     if (previewMode !== 'split') return
 
-    jumpEditorToLine(pendingJump.line1)
-
-    // 预览 DOM 在切换模式/重新渲染后可能还没就绪：多等一帧更稳
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        jumpPreviewToHeading(pendingJump)
-        setPendingJump(null)
-      })
-    })
+    const v = editorViewRef.current
+    if (!v) return
+    tryRunPendingJump(v)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingJump, previewMode, isMarkdown, html])
 
@@ -827,6 +1109,21 @@ export function App() {
                     </button>
                   </div>
                 ))}
+                <div
+                  className="tab tab-add"
+                  role="button"
+                  tabIndex={0}
+                  title={t(locale, 'noFile.action.newFile')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    newTab()
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') newTab()
+                  }}
+                >
+                  +
+                </div>
               </div>
             </div>
           </>
@@ -868,6 +1165,21 @@ export function App() {
                     </button>
                   </div>
                 ))}
+                <div
+                  className="tab tab-add"
+                  role="button"
+                  tabIndex={0}
+                  title={t(locale, 'noFile.action.newFile')}
+                  onMouseDown={(e) => {
+                    e.stopPropagation()
+                    newTab()
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') newTab()
+                  }}
+                >
+                  +
+                </div>
               </div>
             </div>
 
@@ -985,7 +1297,14 @@ export function App() {
                     <div className="editor-shell">
                       {isMarkdown ? (
                         <div className="editor-side-toolbar">
-                          <MarkdownToolbar view={editorViewRef.current} locale={locale} layout="vertical" variant="icon" />
+                          <MarkdownToolbar
+                            view={editorView}
+                            locale={locale}
+                            layout="vertical"
+                            variant="icon"
+                            onInsertImage={() => insertImages({ source: 'picker' })}
+                            onInsertScreenshot={() => insertScreenshot()}
+                          />
                         </div>
                       ) : null}
                       <div className="editor-host">

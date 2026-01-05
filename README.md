@@ -1,4 +1,4 @@
-## SIde Markdown (React + Electron text editor)
+## SIde Markdown
 
 A desktop text/Markdown editor with **multi tabs**, **live Markdown preview (split view)**, **cross-platform menus & shortcuts**, and **common text encodings** (UTF-8 / UTF-16LE / GBK / GB18030 / ANSI Win-1252). Built and packaged with **electron-builder** for Windows and macOS.
 
@@ -35,7 +35,25 @@ npm i
 npm run dev
 ```
 
-### Build & release (electron-builder)
+### Analytics (build-time env)
+
+Analytics is configured via **Vite build-time env** (renderer). Create `.env.local` and restart dev server / rebuild.
+You can start from `env.sample` (copy to `.env.local`).
+
+- **VITE_ANALYTICS_ENABLED**: `true` / `false` (default: `true`)
+- **VITE_ANALYTICS_REGION**: `auto` / `cn` / `non-cn` (default: `auto`)
+  - `auto`: determine CN/non-CN **by OS timezone only** (e.g. `Asia/Shanghai` => CN)
+- **VITE_ANALYTICS_PROVIDER**: `auto` / `baidu` / `ga` / `both` (default: `auto`)
+- **VITE_ANALYTICS_DEBUG**: `true` / `false` (default: `false`)
+- **VITE_BAIDU_SITE_ID**: Baidu Tongji site id (optional)
+- **VITE_GA_MEASUREMENT_ID**: GA measurement id like `G-XXXXXXX` (optional)
+
+Notes:
+- When region is inferred as **CN**, the app will pick **Baidu first** (if `VITE_BAIDU_SITE_ID` is set). Google is only used when region is **non-CN**, or when Baidu id is empty.
+- To force Google analytics, set **`VITE_ANALYTICS_REGION=non-cn`** and provide a valid **`VITE_GA_MEASUREMENT_ID`**.
+- In some networks (e.g. mainland China), `googletagmanager.com` may be blocked, causing GA script injection to fail.
+
+### Build & release
 
 Build renderer + main/preload first:
 
@@ -59,7 +77,7 @@ npm run dist:win
 
 Artifacts will be in `release/` (NSIS installer + portable exe).
 
-### Auto update (GitHub Releases)
+### Auto update
 
 - The app checks GitHub Releases in the background on startup, shows a **red dot** in the in-app menu when a new version is available, and installs the update after you click it.
 - **Windows**: auto update works with the **NSIS installer** build (portable exe does **not** support auto update).
@@ -91,7 +109,7 @@ npm run dist:mac:intel:publish
 npm run dist:win:publish
 ```
 
-### Notes (cross-platform packaging)
+### Notes
 
 - **Build on the target OS**: build macOS apps on macOS, Windows apps on Windows (toolchains/signing/system components differ).
 - This project ships **without code signing** by default (`dmg.sign=false`). For production releases, add certificates and signing.

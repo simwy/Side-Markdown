@@ -264,6 +264,14 @@ body {
   border-color: var(--border);
 }
 
+.tab.tab-add {
+  cursor: pointer;
+  justify-content: center;
+  min-width: 30px;
+  font-size: 14px;
+  line-height: 1;
+}
+
 .tab .dirty {
   width: 6px;
   height: 6px;
@@ -770,6 +778,11 @@ body {
   overflow: auto;
   height: 100%;
   min-height: 0;
+}
+
+.preview img {
+  max-width: 100%;
+  height: auto;
 }
 
 /* Editor focus ring: avoid drawing focus ring around entire editor area */

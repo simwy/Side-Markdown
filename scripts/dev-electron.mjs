@@ -31,7 +31,11 @@ function spawnElectron() {
   const env = { ...process.env }
   // 在 dev 模式下由 Vite 提供页面地址（package.json 的 dev 脚本已注入）
   const cmd = getElectronBin()
-  const args = ['.']
+  // 关键：不同仓库/不同分支同时跑 dev 时，如果 package.json 的 name 相同，
+  // Electron 的默认 userData 路径与单实例锁会互相冲突，导致“启动即退出/拉起另一个实例（看起来像白屏）”。
+  // dev 模式下强制隔离 user-data-dir，避免抢锁/抢 settings/session。
+  const devUserData = path.join(projectRoot, '.electron-user-data')
+  const args = ['.', `--user-data-dir=${devUserData}`]
 
   // 刚启动/重启后，dist-electron 往往还会抖动写入一小段时间；忽略这段时间的 watch 事件，避免连环重启
   ignoreChangesUntil = Date.now() + 500

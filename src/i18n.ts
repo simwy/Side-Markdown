@@ -4,6 +4,7 @@ export type I18nKey =
   | 'new'
   | 'open'
   | 'save'
+  | 'saveAs'
   | 'export'
   | 'export.html'
   | 'export.pdf'
@@ -27,6 +28,14 @@ export type I18nKey =
   | 'settings.dockDelay'
   | 'settings.hiddenWidth'
   | 'settings.shownWidth'
+  | 'settings.analytics'
+  | 'settings.analytics.enabled'
+  | 'settings.analytics.enabled.off'
+  | 'settings.analytics.enabled.on'
+  | 'settings.analytics.region'
+  | 'settings.analytics.region.auto'
+  | 'settings.analytics.region.cn'
+  | 'settings.analytics.region.nonCn'
   | 'noFile.title'
   | 'noFile.desc'
   | 'noFile.prompt'
@@ -45,6 +54,7 @@ export type I18nKey =
   | 'md.ol'
   | 'md.task'
   | 'md.link'
+  | 'md.screenshot'
   | 'md.image'
   | 'md.table'
   | 'md.hr'
@@ -63,6 +73,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     new: '新建',
     open: '打开',
     save: '保存',
+    saveAs: '另存为…',
     export: '导出',
     'export.html': '导出为 HTML',
     'export.pdf': '导出为 PDF',
@@ -86,6 +97,14 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': '靠边回收延迟（ms）',
     'settings.hiddenWidth': '靠边收缩宽度（px）',
     'settings.shownWidth': '靠边展开宽度（px）',
+    'settings.analytics': '埋点/统计',
+    'settings.analytics.enabled': '启用统计',
+    'settings.analytics.enabled.off': '关闭',
+    'settings.analytics.enabled.on': '开启',
+    'settings.analytics.region': '用户地区判断',
+    'settings.analytics.region.auto': '自动（语言/时区推断）',
+    'settings.analytics.region.cn': '强制中国用户（百度统计）',
+    'settings.analytics.region.nonCn': '强制非中国用户（Google）',
     'noFile.title': '当前没有打开的文件',
     'noFile.desc': '点击这里选择「新建文件」或「打开文件」',
     'noFile.prompt': '请选择接下来要做什么：',
@@ -104,6 +123,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.ol': '有序列表（1.）',
     'md.task': '任务列表（- [ ]）',
     'md.link': '链接（[text](url)）',
+    'md.screenshot': '截图并插入',
     'md.image': '图片（![alt](url)）',
     'md.table': '表格',
     'md.hr': '分割线（---）',
@@ -121,6 +141,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     new: '新增',
     open: '打開',
     save: '儲存',
+    saveAs: '另存新檔…',
     export: '匯出',
     'export.html': '匯出為 HTML',
     'export.pdf': '匯出為 PDF',
@@ -144,6 +165,14 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': '靠邊回收延遲（ms）',
     'settings.hiddenWidth': '靠邊收縮寬度（px）',
     'settings.shownWidth': '靠邊展開寬度（px）',
+    'settings.analytics': '埋點/統計',
+    'settings.analytics.enabled': '啟用統計',
+    'settings.analytics.enabled.off': '關閉',
+    'settings.analytics.enabled.on': '開啟',
+    'settings.analytics.region': '使用者地區判斷',
+    'settings.analytics.region.auto': '自動（語言/時區推斷）',
+    'settings.analytics.region.cn': '強制中國使用者（百度統計）',
+    'settings.analytics.region.nonCn': '強制非中國使用者（Google）',
     'noFile.title': '目前沒有開啟的檔案',
     'noFile.desc': '點擊這裡選擇「新增檔案」或「開啟檔案」',
     'noFile.prompt': '請選擇接下來要做什麼：',
@@ -162,6 +191,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.ol': '有序清單（1.）',
     'md.task': '任務清單（- [ ]）',
     'md.link': '連結（[text](url)）',
+    'md.screenshot': '截圖並插入',
     'md.image': '圖片（![alt](url)）',
     'md.table': '表格',
     'md.hr': '分隔線（---）',
@@ -179,6 +209,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     new: 'New',
     open: 'Open',
     save: 'Save',
+    saveAs: 'Save As…',
     export: 'Export',
     'export.html': 'Export as HTML',
     'export.pdf': 'Export as PDF',
@@ -202,6 +233,14 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': 'Auto-hide delay (ms)',
     'settings.hiddenWidth': 'Collapsed width (px)',
     'settings.shownWidth': 'Expanded width (px)',
+    'settings.analytics': 'Analytics',
+    'settings.analytics.enabled': 'Enable analytics',
+    'settings.analytics.enabled.off': 'Off',
+    'settings.analytics.enabled.on': 'On',
+    'settings.analytics.region': 'Region detection',
+    'settings.analytics.region.auto': 'Auto (language/timezone heuristic)',
+    'settings.analytics.region.cn': 'Force China (Baidu Tongji)',
+    'settings.analytics.region.nonCn': 'Force non-China (Google)',
     'noFile.title': 'No file is currently open',
     'noFile.desc': 'Click here to choose “New File” or “Open File”',
     'noFile.prompt': 'What would you like to do next?',
@@ -220,6 +259,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.ol': 'Numbered list (1.)',
     'md.task': 'Task list (- [ ])',
     'md.link': 'Link ([text](url))',
+    'md.screenshot': 'Screenshot & insert',
     'md.image': 'Image (![alt](url))',
     'md.table': 'Table',
     'md.hr': 'Horizontal rule (---)',
@@ -237,6 +277,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     new: '新規',
     open: '開く',
     save: '保存',
+    saveAs: '名前を付けて保存…',
     export: 'エクスポート',
     'export.html': 'HTML にエクスポート',
     'export.pdf': 'PDF にエクスポート',
@@ -260,6 +301,14 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': '自動収納の遅延（ms）',
     'settings.hiddenWidth': '収納幅（px）',
     'settings.shownWidth': '展開幅（px）',
+    'settings.analytics': 'アナリティクス',
+    'settings.analytics.enabled': 'アナリティクスを有効化',
+    'settings.analytics.enabled.off': 'オフ',
+    'settings.analytics.enabled.on': 'オン',
+    'settings.analytics.region': '地域判定',
+    'settings.analytics.region.auto': '自動（言語/タイムゾーン推定）',
+    'settings.analytics.region.cn': '中国に固定（Baidu Tongji）',
+    'settings.analytics.region.nonCn': '中国以外に固定（Google）',
     'noFile.title': '開いているファイルはありません',
     'noFile.desc': 'クリックして「新規ファイル」または「ファイルを開く」を選択',
     'noFile.prompt': '次に行う操作を選択してください：',
@@ -278,6 +327,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.ol': '番号付きリスト（1.）',
     'md.task': 'タスクリスト（- [ ]）',
     'md.link': 'リンク（[text](url)）',
+    'md.screenshot': 'スクリーンショットを挿入',
     'md.image': '画像（![alt](url)）',
     'md.table': '表',
     'md.hr': '区切り線（---）',
@@ -295,6 +345,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     new: '새로 만들기',
     open: '열기',
     save: '저장',
+    saveAs: '다른 이름으로 저장…',
     export: '내보내기',
     'export.html': 'HTML로 내보내기',
     'export.pdf': 'PDF로 내보내기',
@@ -318,6 +369,14 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'settings.dockDelay': '자동 숨김 지연(ms)',
     'settings.hiddenWidth': '접힘 너비(px)',
     'settings.shownWidth': '펼침 너비(px)',
+    'settings.analytics': '분석/통계',
+    'settings.analytics.enabled': '분석 사용',
+    'settings.analytics.enabled.off': '끔',
+    'settings.analytics.enabled.on': '켬',
+    'settings.analytics.region': '지역 판별',
+    'settings.analytics.region.auto': '자동(언어/시간대 추정)',
+    'settings.analytics.region.cn': '중국으로 고정(바이두 통계)',
+    'settings.analytics.region.nonCn': '중국 외로 고정(Google)',
     'noFile.title': '열려 있는 파일이 없습니다',
     'noFile.desc': '여기를 클릭하여 “새 파일” 또는 “파일 열기”를 선택하세요',
     'noFile.prompt': '다음에 무엇을 하시겠습니까?',
@@ -336,6 +395,7 @@ const dict: Record<Locale, Record<I18nKey, string>> = {
     'md.ol': '번호 매기기 목록(1.)',
     'md.task': '작업 목록(- [ ])',
     'md.link': '링크([text](url))',
+    'md.screenshot': '스크린샷 삽입',
     'md.image': '이미지(![alt](url))',
     'md.table': '표',
     'md.hr': '가로줄(---)',

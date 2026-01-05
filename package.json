@@ -1,27 +1,28 @@
 {
-  "name": "sim4-side-markdown",
+  "name": "side-markdown",
   "version": "1.1.0",
   "private": true,
   "description": "React + Electron 文本编辑器（多 Tab + Markdown 分栏预览 + 跨平台打包）",
-  "author": "sim4next",
+  "author": "simwy",
   "license": "MIT",
   "main": "dist-electron/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"vite --port 5173 --strictPort\" \"tsup --watch\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 node scripts/dev-electron.mjs\"",
     "build": "vite build && tsup",
+    "clean:release": "node -e \"require('fs').rmSync('release',{recursive:true,force:true})\"",
     "lint": "echo \"(optional) add eslint later\"",
     "start": "electron .",
     "icon:mac": "bash scripts/make-mac-icns.sh",
-    "dist": "npm run build && electron-builder",
-    "dist:dir": "npm run build && electron-builder --dir",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:mac:intel": "npm run build && electron-builder --mac --x64",
-    "dist:mac:apple": "npm run build && electron-builder --mac --arm64 -c.electronDist=node_modules/electron/dist",
-    "dist:mac:apple:publish": "npm run build && electron-builder --mac --arm64 -c.electronDist=node_modules/electron/dist --publish always",
-    "dist:mac:intel:publish": "npm run build && electron-builder --mac --x64 --publish always",
-    "dist:win:publish": "npm run build && electron-builder --win --publish always"
+    "dist": "npm run build && npm run clean:release && electron-builder",
+    "dist:dir": "npm run build && npm run clean:release && electron-builder --dir",
+    "dist:win": "npm run build && npm run clean:release && electron-builder --win",
+    "dist:mac": "npm run build && npm run clean:release && electron-builder --mac",
+    "dist:mac:intel": "npm run build && npm run clean:release && electron-builder --mac --x64",
+    "dist:mac:apple": "npm run build && npm run clean:release && electron-builder --mac --arm64 -c.electronDist=node_modules/electron/dist",
+    "dist:mac:apple:publish": "npm run build && npm run clean:release && electron-builder --mac --arm64 -c.electronDist=node_modules/electron/dist --publish always",
+    "dist:mac:intel:publish": "npm run build && npm run clean:release && electron-builder --mac --x64 --publish always",
+    "dist:win:publish": "npm run build && npm run clean:release && electron-builder --win --publish always"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.1",
@@ -54,14 +55,14 @@
     "wait-on": "^8.0.2"
   },
   "build": {
-    "appId": "com.sim4next.sim4sideMarkdown",
-    "productName": "SIde Markdown",
+    "appId": "com.simwy.SideMarkdown",
+    "productName": "Side-Markdown",
     "asar": true,
     "publish": [
       {
         "provider": "github",
-        "owner": "sim4next",
-        "repo": "Sim4SideMarkdown"
+        "owner": "simwy",
+        "repo": "Side-Markdown"
       }
     ],
     "fileAssociations": [

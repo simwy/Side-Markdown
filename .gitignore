@@ -2,8 +2,11 @@ node_modules
 dist
 dist-electron
 release
+.env
+.env.local
 .DS_Store
 *.log
 .idea
 .vscode
 .vite
+.electron-user-data

@@ -72,6 +72,14 @@ export type MenuCommand =
   | { type: 'window:toggleMaximize' }
   | { type: 'window:close' }
   | { type: 'window:dock'; mode: 'left' | 'center' | 'right' }
+  | {
+      type: 'analytics:version_menu_click'
+      locale: Locale
+      currentVersion: string
+      updateStatus: UpdateState['status']
+      availableVersion?: string
+    }
+  | { type: 'analytics:triggerTest' }
 
 export type ThemeMode = 'system' | 'dark' | 'light'
 export type Locale = 'zh-CN' | 'zh-TW' | 'en' | 'ja' | 'ko'
@@ -88,6 +96,24 @@ export type AppSettings = {
   theme: ThemeMode
   locale: Locale
   dock: DockSettings
+}
+
+export type ImageImportMode = 'relative' | 'absolute'
+
+export type ImageImportRequest = {
+  // 当前 Markdown 文档的绝对路径（用于确定 assets 保存位置 / 计算相对路径）
+  docPath: string
+  // 保存目录名，默认 'assets'
+  assetsDirName?: string
+  // 插入到 Markdown 中的路径格式：相对（推荐）/绝对
+  mode?: ImageImportMode
+}
+
+export type SavedImage = {
+  absPath: string
+  // 可直接写入 Markdown 的路径（relative 模式一般是 assets/xxx.png）
+  link: string
+  fileName: string
 }
 
 export type UpdateState = {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, protocol, screen, session, shell, systemPreferences } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import chardet from 'chardet'
@@ -10,9 +10,12 @@ import {
   type EncodingName,
   type ExportRequest,
   type ExportResponse,
+  type ImageImportMode,
+  type ImageImportRequest,
   type Locale,
   type MenuCommand,
   type OpenedFile,
+  type SavedImage,
   type SessionState,
   type SaveFileRequest,
   type SaveFileResponse,
@@ -28,10 +31,209 @@ const DOCK_EDGE_TRIGGER_PX = 2
 // 贴边逻辑 tick：用于检测 hover / blur / delay
 const DOCK_TICK_MS = 10
 
+// Allow renderer to load local files safely via smfile:// in both dev(http) and prod(file) modes.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'smfile',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true
+    }
+  }
+])
+
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
+
+function isImagePath(p: string) {
+  const ext = path.extname(p).toLowerCase()
+  return IMAGE_EXTS.has(ext)
+}
+
+function sanitizeFileStem(name: string) {
+  const base = String(name || '').trim()
+  // keep it simple: remove path separators and reserved characters
+  return base
+    .replace(/[\\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+}
+
+function docStemFromPath(docPath: string) {
+  const base = path.basename(docPath)
+  const stem = path.basename(base, path.extname(base))
+  return sanitizeFileStem(stem) || 'document'
+}
+
+function assetsDirForDoc(docPath: string, assetsDirName: string) {
+  return path.join(path.dirname(docPath), assetsDirName, docStemFromPath(docPath))
+}
+
+async function ensureDir(p: string) {
+  await fs.mkdir(p, { recursive: true })
+}
+
+function tsName() {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(
+    d.getSeconds()
+  )}`
+}
+
+async function uniqueDestPath(dir: string, stem: string, ext: string) {
+  const safeStem = sanitizeFileStem(stem) || 'image'
+  const safeExt = ext.startsWith('.') ? ext : `.${ext}`
+  const base = path.join(dir, `${safeStem}${safeExt}`)
+  try {
+    await fs.access(base)
+  } catch {
+    return base
+  }
+  for (let i = 1; i <= 999; i++) {
+    const p = path.join(dir, `${safeStem}-${i}${safeExt}`)
+    try {
+      await fs.access(p)
+    } catch {
+      return p
+    }
+  }
+  return path.join(dir, `${safeStem}-${Date.now()}${safeExt}`)
+}
+
+function makeLink(docPath: string, absPath: string, mode: ImageImportMode) {
+  if (mode === 'absolute') return absPath
+  const rel = path.relative(path.dirname(docPath), absPath)
+  // Markdown uses forward slashes reliably
+  return rel.replace(/\\/g, '/')
+}
+
+async function saveBufferAsImage(req: ImageImportRequest & { data: ArrayBuffer; mime?: string; nameHint?: string }): Promise<SavedImage> {
+  const assetsDirName = req.assetsDirName || 'assets'
+  const mode: ImageImportMode = req.mode || 'relative'
+
+  const assetsDir = assetsDirForDoc(req.docPath, assetsDirName)
+  await ensureDir(assetsDir)
+
+  const mime = String(req.mime || '').toLowerCase()
+  const extFromMime =
+    mime === 'image/png'
+      ? '.png'
+      : mime === 'image/jpeg'
+        ? '.jpg'
+        : mime === 'image/gif'
+          ? '.gif'
+          : mime === 'image/webp'
+            ? '.webp'
+            : '.png'
+
+  const dest = await uniqueDestPath(assetsDir, req.nameHint || `pasted-${tsName()}`, extFromMime)
+  const buf = Buffer.from(new Uint8Array(req.data))
+  await fs.writeFile(dest, buf)
+  return { absPath: dest, link: makeLink(req.docPath, dest, mode), fileName: path.basename(dest) }
+}
+
+async function importImagePaths(req: ImageImportRequest & { filePaths: string[] }): Promise<SavedImage[]> {
+  const assetsDirName = req.assetsDirName || 'assets'
+  const mode: ImageImportMode = req.mode || 'relative'
+
+  const assetsDir = assetsDirForDoc(req.docPath, assetsDirName)
+  await ensureDir(assetsDir)
+
+  const out: SavedImage[] = []
+  for (const p of req.filePaths) {
+    if (typeof p !== 'string' || p.length === 0) continue
+    if (!isImagePath(p)) continue
+    const ext = path.extname(p) || '.png'
+    const stem = sanitizeFileStem(path.basename(p, ext)) || `image-${tsName()}`
+    const dest = await uniqueDestPath(assetsDir, stem, ext)
+    await fs.copyFile(p, dest)
+    out.push({ absPath: dest, link: makeLink(req.docPath, dest, mode), fileName: path.basename(dest) })
+  }
+  return out
+}
+
+const TRACE_ANALYTICS_REQUESTS =
+  process.env.SIDE_MARKDOWN_TRACE_ANALYTICS === '1' ||
+  process.env.ANALYTICS_TRACE === '1' ||
+  process.env.ELECTRON_TRACE_ANALYTICS === '1'
+
+function setupAnalyticsRequestTrace() {
+  if (!TRACE_ANALYTICS_REQUESTS) return
+
+  const filter = { urls: ['*://*/*'] }
+  const isAnalyticsUrl = (url: string) =>
+    /(hm\.baidu\.com|googletagmanager\.com|google-analytics\.com|analytics\.google\.com|doubleclick\.net)\b/i.test(url) ||
+    /\/(g\/)?collect\b/i.test(url) ||
+    /\/mp\/collect\b/i.test(url)
+
+  // eslint-disable-next-line no-console
+  console.log('[analytics:req]', 'trace enabled (filtered)', [
+    'hm.baidu.com',
+    '*.googletagmanager.com',
+    '*.google-analytics.com',
+    'analytics.google.com',
+    '*.doubleclick.net',
+    '*/collect*'
+  ])
+
+  session.defaultSession.webRequest.onBeforeRequest(filter, (details, callback) => {
+    if (!isAnalyticsUrl(details.url)) return callback({})
+    // eslint-disable-next-line no-console
+    console.log('[analytics:req]', {
+      phase: 'before',
+      method: details.method,
+      resourceType: details.resourceType,
+      url: details.url
+    })
+    callback({})
+  })
+
+  session.defaultSession.webRequest.onCompleted(filter, (details) => {
+    if (!isAnalyticsUrl(details.url)) return
+    // eslint-disable-next-line no-console
+    console.log('[analytics:req]', {
+      phase: 'completed',
+      method: details.method,
+      statusCode: details.statusCode,
+      fromCache: details.fromCache,
+      url: details.url
+    })
+  })
+
+  session.defaultSession.webRequest.onErrorOccurred(filter, (details) => {
+    if (!isAnalyticsUrl(details.url)) return
+    // eslint-disable-next-line no-console
+    console.log('[analytics:req]', {
+      phase: 'error',
+      method: details.method,
+      error: details.error,
+      url: details.url
+    })
+  })
+}
+
+// ===== Dev userData isolation =====
+// 重要：Electron 的单实例锁基于 app.getPath('userData')。
+// 如果不同仓库/不同分支使用了相同的 package.json name，会共用同一个 userData 目录，导致“启动即退出/看似白屏”。
+// dev 模式下强制隔离 userData，避免与其他实例冲突。
+if (!app.isPackaged) {
+  const devUserData =
+    typeof process.env.ELECTRON_USER_DATA_DIR === 'string' && process.env.ELECTRON_USER_DATA_DIR.trim().length > 0
+      ? path.resolve(process.env.ELECTRON_USER_DATA_DIR.trim())
+      : path.join(process.cwd(), '.electron-user-data')
+  app.setPath('userData', devUserData)
+}
+
 // ===== Single instance guard =====
 // dev 模式下如果启动器/重启脚本出现抖动，可能会短时间拉起第二个进程；这里兜底避免“双实例”
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
+  // eslint-disable-next-line no-console
+  console.error('[main] requestSingleInstanceLock failed, quitting. userData=', app.getPath('userData'))
   app.quit()
   process.exit(0)
 }
@@ -52,8 +254,8 @@ function sendMenuCommand(win: BrowserWindow | null, cmd: MenuCommand) {
 }
 
 // ===== Auto update (GitHub Releases via electron-updater) =====
-const GITHUB_OWNER = 'sim4next'
-const GITHUB_REPO = 'Sim4SideMarkdown'
+const GITHUB_OWNER = 'simwy'
+const GITHUB_REPO = 'Side-Markdown'
 
 let updateState: UpdateState = {
   status: 'idle',
@@ -67,6 +269,62 @@ function versionLabel(locale: Locale) {
   if (locale === 'ko') return '버전'
   // zh-CN / zh-TW
   return '版本'
+}
+
+function menuLabel(locale: Locale, key: 'file' | 'new' | 'open' | 'save' | 'saveAs' | 'export' | 'closeTab' | 'quit') {
+  const dict: Record<Locale, Record<typeof key, string>> = {
+    'zh-CN': {
+      file: '文件',
+      new: '新建',
+      open: '打开…',
+      save: '保存',
+      saveAs: '另存为…',
+      export: '导出',
+      closeTab: '关闭标签页',
+      quit: '退出'
+    },
+    'zh-TW': {
+      file: '檔案',
+      new: '新增',
+      open: '打開…',
+      save: '儲存',
+      saveAs: '另存新檔…',
+      export: '匯出',
+      closeTab: '關閉分頁',
+      quit: '退出'
+    },
+    en: {
+      file: 'File',
+      new: 'New',
+      open: 'Open…',
+      save: 'Save',
+      saveAs: 'Save As…',
+      export: 'Export',
+      closeTab: 'Close Tab',
+      quit: 'Quit'
+    },
+    ja: {
+      file: 'ファイル',
+      new: '新規',
+      open: '開く…',
+      save: '保存',
+      saveAs: '名前を付けて保存…',
+      export: 'エクスポート',
+      closeTab: 'タブを閉じる',
+      quit: '終了'
+    },
+    ko: {
+      file: '파일',
+      new: '새로 만들기',
+      open: '열기…',
+      save: '저장',
+      saveAs: '다른 이름으로 저장…',
+      export: '내보내기',
+      closeTab: '탭 닫기',
+      quit: '종료'
+    }
+  }
+  return dict[locale]?.[key] ?? dict.en[key]
 }
 
 function isUpdaterEnabled() {
@@ -591,6 +849,7 @@ async function exportPdfWithDialog(win: BrowserWindow, req: ExportRequest): Prom
 
 function buildAppMenu(winGetter: () => BrowserWindow | null) {
   const accel = (win: string, mac: string) => (isMac ? mac : win)
+  const locale = appSettings.locale
 
   const template: Electron.MenuItemConstructorOptions[] = []
 
@@ -607,7 +866,7 @@ function buildAppMenu(winGetter: () => BrowserWindow | null) {
         { role: 'unhide' },
         { type: 'separator' },
         {
-          label: '退出',
+          label: menuLabel(locale, 'quit'),
           accelerator: 'Cmd+Q',
           click: () => app.quit()
         }
@@ -616,31 +875,43 @@ function buildAppMenu(winGetter: () => BrowserWindow | null) {
   }
 
   template.push({
-    label: '文件',
+    label: menuLabel(locale, 'file'),
     submenu: [
-      { label: '新建', accelerator: accel('Ctrl+N', 'Cmd+N'), click: () => sendMenuCommand(winGetter(), { type: 'file:new' }) },
-      { label: '打开…', accelerator: accel('Ctrl+O', 'Cmd+O'), click: () => sendMenuCommand(winGetter(), { type: 'file:open' }) },
+      { label: menuLabel(locale, 'new'), accelerator: accel('Ctrl+N', 'Cmd+N'), click: () => sendMenuCommand(winGetter(), { type: 'file:new' }) },
+      { label: menuLabel(locale, 'open'), accelerator: accel('Ctrl+O', 'Cmd+O'), click: () => sendMenuCommand(winGetter(), { type: 'file:open' }) },
       { type: 'separator' },
-      { label: '保存', accelerator: accel('Ctrl+S', 'Cmd+S'), click: () => sendMenuCommand(winGetter(), { type: 'file:save' }) },
-      { label: '另存为…', accelerator: accel('Ctrl+Shift+S', 'Cmd+Shift+S'), click: () => sendMenuCommand(winGetter(), { type: 'file:saveAs' }) },
+      { label: menuLabel(locale, 'save'), accelerator: accel('Ctrl+S', 'Cmd+S'), click: () => sendMenuCommand(winGetter(), { type: 'file:save' }) },
+      { label: menuLabel(locale, 'saveAs'), accelerator: accel('Ctrl+Shift+S', 'Cmd+Shift+S'), click: () => sendMenuCommand(winGetter(), { type: 'file:saveAs' }) },
       { type: 'separator' },
       {
-        label: '导出',
+        label: menuLabel(locale, 'export'),
         submenu: [
-          { label: 'HTML…', click: () => sendMenuCommand(winGetter(), { type: 'file:exportHtml' }) },
-          { label: 'PDF…', click: () => sendMenuCommand(winGetter(), { type: 'file:exportPdf' }) },
-          { label: 'Word（.doc）…', click: () => sendMenuCommand(winGetter(), { type: 'file:exportWord' }) }
+          {
+            label: 'HTML…',
+            accelerator: accel('Ctrl+Alt+H', 'Cmd+Alt+H'),
+            click: () => sendMenuCommand(winGetter(), { type: 'file:exportHtml' })
+          },
+          {
+            label: 'PDF…',
+            accelerator: accel('Ctrl+Alt+D', 'Cmd+Alt+D'),
+            click: () => sendMenuCommand(winGetter(), { type: 'file:exportPdf' })
+          },
+          {
+            label: 'Word（.doc）…',
+            accelerator: accel('Ctrl+Alt+W', 'Cmd+Alt+W'),
+            click: () => sendMenuCommand(winGetter(), { type: 'file:exportWord' })
+          }
         ]
       },
       { type: 'separator' },
-      { label: '关闭标签页', accelerator: accel('Ctrl+W', 'Cmd+W'), click: () => sendMenuCommand(winGetter(), { type: 'file:closeTab' }) },
+      { label: menuLabel(locale, 'closeTab'), accelerator: accel('Ctrl+W', 'Cmd+W'), click: () => sendMenuCommand(winGetter(), { type: 'file:closeTab' }) },
       { type: 'separator' },
       ...(isMac
         ? []
         : [
             {
-              label: '退出',
-              accelerator: 'Alt+F4',
+              label: menuLabel(locale, 'quit'),
+              accelerator: 'Ctrl+Q',
               click: () => app.quit()
             }
           ])
@@ -671,30 +942,72 @@ function buildAppMenu(winGetter: () => BrowserWindow | null) {
   template.push({
     label: '格式',
     submenu: [
-      { label: '自动换行', type: 'checkbox', checked: true, click: () => sendMenuCommand(winGetter(), { type: 'format:wordWrapToggle' }) },
-      { label: '字体…', click: () => sendMenuCommand(winGetter(), { type: 'format:font' }) }
+      {
+        label: '自动换行',
+        type: 'checkbox',
+        checked: true,
+        accelerator: accel('Alt+Z', 'Alt+Z'),
+        click: () => sendMenuCommand(winGetter(), { type: 'format:wordWrapToggle' })
+      },
+      {
+        label: '字体…',
+        accelerator: accel('Ctrl+Alt+F', 'Cmd+Alt+F'),
+        click: () => sendMenuCommand(winGetter(), { type: 'format:font' })
+      }
     ]
   })
 
   template.push({
     label: '视图',
     submenu: [
-      { label: '状态栏', type: 'checkbox', checked: true, click: () => sendMenuCommand(winGetter(), { type: 'view:statusBarToggle' }) },
+      {
+        label: '状态栏',
+        type: 'checkbox',
+        checked: true,
+        accelerator: accel('Ctrl+Alt+B', 'Cmd+Alt+B'),
+        click: () => sendMenuCommand(winGetter(), { type: 'view:statusBarToggle' })
+      },
       { type: 'separator' },
-      { label: 'Markdown 预览模式（编辑/预览/分栏）', accelerator: accel('Ctrl+P', 'Cmd+P'), click: () => sendMenuCommand(winGetter(), { type: 'view:togglePreviewMode' }) }
+      { label: 'Markdown 预览模式（编辑/预览/分栏）', accelerator: accel('Ctrl+P', 'Cmd+P'), click: () => sendMenuCommand(winGetter(), { type: 'view:togglePreviewMode' }) },
+      { type: 'separator' },
+      {
+        label: '切换开发者工具',
+        accelerator: accel('Ctrl+Shift+I', 'Alt+Cmd+I'),
+        click: () => winGetter()?.webContents.toggleDevTools()
+      }
     ]
   })
 
   template.push({
     label: '编码',
     submenu: [
-      { label: 'UTF-8', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'utf8' }) },
-      { label: 'UTF-16LE', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'utf16le' }) },
+      {
+        label: 'UTF-8',
+        accelerator: accel('Ctrl+Alt+1', 'Cmd+Alt+1'),
+        click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'utf8' })
+      },
+      {
+        label: 'UTF-16LE',
+        accelerator: accel('Ctrl+Alt+2', 'Cmd+Alt+2'),
+        click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'utf16le' })
+      },
       { type: 'separator' },
-      { label: 'GBK', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'gbk' }) },
-      { label: 'GB18030', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'gb18030' }) },
+      {
+        label: 'GBK',
+        accelerator: accel('Ctrl+Alt+3', 'Cmd+Alt+3'),
+        click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'gbk' })
+      },
+      {
+        label: 'GB18030',
+        accelerator: accel('Ctrl+Alt+4', 'Cmd+Alt+4'),
+        click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'gb18030' })
+      },
       { type: 'separator' },
-      { label: 'ANSI（Windows-1252）', click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'windows1252' }) }
+      {
+        label: 'ANSI（Windows-1252）',
+        accelerator: accel('Ctrl+Alt+5', 'Cmd+Alt+5'),
+        click: () => sendMenuCommand(winGetter(), { type: 'encoding:set', encoding: 'windows1252' })
+      }
     ]
   })
 
@@ -726,6 +1039,7 @@ function buildAppMenu(winGetter: () => BrowserWindow | null) {
         : [
             {
               label: '关闭窗口',
+              accelerator: 'Alt+F4',
               click: () => winGetter()?.close()
             }
           ])
@@ -738,19 +1052,36 @@ function buildAppMenu(winGetter: () => BrowserWindow | null) {
       {
         id: 'help.version',
         label: getUpdateMenuLabel(appSettings.locale),
+        accelerator: accel('Ctrl+Shift+U', 'Cmd+Shift+U'),
         click: async () => {
+          // 埋点：统计有多少用户会点击“版本”去触发更新动作
+          sendMenuCommand(winGetter(), {
+            type: 'analytics:version_menu_click',
+            locale: appSettings.locale,
+            currentVersion: updateState.currentVersion,
+            updateStatus: updateState.status,
+            availableVersion: updateState.availableVersion
+          })
           await startUpdate()
         }
       },
       { type: 'separator' },
       {
+        label: '触发埋点',
+        accelerator: accel('Ctrl+Alt+T', 'Cmd+Alt+T'),
+        click: () => sendMenuCommand(winGetter(), { type: 'analytics:triggerTest' })
+      },
+      { type: 'separator' },
+      {
         label: '项目主页',
+        accelerator: accel('Ctrl+Alt+G', 'Cmd+Alt+G'),
         click: async () => {
-          await shell.openExternal('https://github.com/sim4next/Sim4SideMarkdown')
+          await shell.openExternal('https://github.com/simwy/Side-Markdown')
         }
       },
       {
         label: '切换深色/浅色（跟随系统）',
+        accelerator: accel('Ctrl+Alt+L', 'Cmd+Alt+L'),
         click: () => {
           nativeTheme.themeSource = nativeTheme.shouldUseDarkColors ? 'light' : 'dark'
         }
@@ -1132,6 +1463,21 @@ async function createMainWindow() {
   mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized', true))
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized', false))
 
+  // Ensure DevTools shortcut works even when menu accelerators don't (frameless window / focus quirks).
+  // - macOS: Option+Command+I
+  // - Windows/Linux: Ctrl+Shift+I
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    const key = String(input.key || '').toLowerCase()
+    if (key !== 'i') return
+
+    const macHit = isMac && input.meta && input.alt && !input.control && !input.shift
+    const winHit = !isMac && input.control && input.shift && !input.alt && !input.meta
+    if (!macHit && !winHit) return
+
+    event.preventDefault()
+    mainWindow?.webContents.toggleDevTools()
+  })
+
   // 恢复“居中模式下置顶”状态
   if (windowAlwaysOnTop) mainWindow.setAlwaysOnTop(true, 'floating')
 
@@ -1228,8 +1574,8 @@ app.on('second-instance', async (_event, commandLine, workingDirectory) => {
 })
 
 app.on('window-all-closed', () => {
-  // macOS 常规行为：关闭所有窗口不退出
-  if (!isMac) app.quit()
+  // 本应用期望行为：关闭最后一个窗口就完全退出（包含 macOS）
+  app.quit()
 })
 
 // macOS: Finder “打开方式”/双击关联文件
@@ -1246,6 +1592,7 @@ app.whenReady().then(async () => {
   // 读取并应用设置（主题/语言/贴边参数）
   appSettings = await readSettings()
   nativeTheme.themeSource = appSettings.theme
+  setupAnalyticsRequestTrace()
 
   // Windows/Linux: 通过文件关联启动时，文件路径一般在 process.argv
   // macOS 主要走 open-file 事件，这里不干扰它
@@ -1259,6 +1606,22 @@ app.whenReady().then(async () => {
 
   await createMainWindow()
   initAutoUpdater()
+
+  // ===== Protocols =====
+  protocol.registerFileProtocol('smfile', (request, callback) => {
+    try {
+      // smfile:///absolute/path or smfile://C:/path
+      const raw = request.url.replace(/^smfile:\/\//i, '')
+      // keep leading slash for posix
+      const decoded = decodeURIComponent(raw)
+      // Windows drive letter may arrive as "/C:/..."
+      const p =
+        /^\/[a-zA-Z]:\//.test(decoded) ? decoded.slice(1) : decoded.startsWith('/') ? decoded : decoded.replace(/^\/+/, '')
+      callback({ path: p })
+    } catch {
+      callback({ error: -6 }) // FILE_NOT_FOUND
+    }
+  })
 
   // ===== IPC =====
   ipcMain.handle('app:getVersion', async () => {
@@ -1311,6 +1674,141 @@ app.whenReady().then(async () => {
   ipcMain.handle('export:pdf', async (_evt, req: ExportRequest) => {
     if (!mainWindow) return null
     return await exportPdfWithDialog(mainWindow, req)
+  })
+
+  // ===== Images =====
+  ipcMain.handle('image:pickAndSave', async (_evt, req: ImageImportRequest & { allowMulti?: boolean }) => {
+    if (!mainWindow) return null
+    if (!req || typeof req !== 'object' || typeof req.docPath !== 'string' || req.docPath.length === 0) return null
+    const allowMulti = !!req.allowMulti
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: '选择图片',
+      properties: allowMulti ? ['openFile', 'multiSelections'] : ['openFile'],
+      filters: [
+        { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    })
+    if (canceled || !filePaths || filePaths.length === 0) return null
+    return await importImagePaths({ ...req, filePaths })
+  })
+
+  ipcMain.handle('image:importFromPaths', async (_evt, req: ImageImportRequest & { filePaths: unknown }) => {
+    if (!req || typeof req !== 'object' || typeof req.docPath !== 'string' || req.docPath.length === 0) return []
+    const filePaths = Array.isArray(req.filePaths) ? req.filePaths.filter((x): x is string => typeof x === 'string' && x.length > 0) : []
+    if (filePaths.length === 0) return []
+    return await importImagePaths({ ...req, filePaths })
+  })
+
+  ipcMain.handle(
+    'image:saveFromBuffer',
+    async (_evt, req: ImageImportRequest & { data: ArrayBuffer; mime?: string; nameHint?: string }) => {
+      if (!req || typeof req !== 'object' || typeof req.docPath !== 'string' || req.docPath.length === 0) {
+        throw new Error('Invalid image request')
+      }
+      if (!(req.data instanceof ArrayBuffer)) throw new Error('Invalid image data')
+      return await saveBufferAsImage(req)
+    }
+  )
+
+  ipcMain.handle('image:saveFromClipboard', async (_evt, req: ImageImportRequest & { nameHint?: string }) => {
+    if (!req || typeof req !== 'object' || typeof req.docPath !== 'string' || req.docPath.length === 0) return null
+    const img = clipboard.readImage()
+    if (img.isEmpty()) return null
+    const png = img.toPNG()
+    const ab = png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength)
+    return await saveBufferAsImage({ ...req, data: ab, mime: 'image/png', nameHint: req.nameHint || `screenshot-${tsName()}` })
+  })
+
+  ipcMain.handle('screenshot:captureAndSave', async (_evt, req: ImageImportRequest & { nameHint?: string }) => {
+    if (!req || typeof req !== 'object' || typeof req.docPath !== 'string' || req.docPath.length === 0) return null
+
+    try {
+      const primary = screen.getPrimaryDisplay()
+      const primaryId = String(primary.id)
+      const size = primary.size
+
+      // 先尝试调用 desktopCapturer.getSources()
+      // 这会触发系统将应用添加到屏幕录制权限列表中（即使没有权限也会添加）
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: size.width, height: size.height }
+      })
+
+      // macOS: 调用 API 后再检查权限状态
+      // 如果没有授权，此时应用已经被添加到系统设置列表中，用户只需要打开开关
+      if (isMac) {
+        const status = systemPreferences.getMediaAccessStatus('screen')
+        if (status !== 'granted') {
+          const locale = appSettings.locale
+          const messages: Record<Locale, { title: string; message: string; detail: string; open: string; cancel: string }> = {
+            'zh-CN': {
+              title: '需要屏幕录制权限',
+              message: '截图功能需要屏幕录制权限才能工作。',
+              detail: '请在"系统设置 → 隐私与安全性 → 屏幕录制"中找到本应用并打开开关，然后重试。',
+              open: '打开系统设置',
+              cancel: '取消'
+            },
+            'zh-TW': {
+              title: '需要螢幕錄製權限',
+              message: '截圖功能需要螢幕錄製權限才能運作。',
+              detail: '請在「系統設定 → 隱私權與安全性 → 螢幕錄製」中找到本應用程式並打開開關，然後重試。',
+              open: '打開系統設定',
+              cancel: '取消'
+            },
+            en: {
+              title: 'Screen Recording Permission Required',
+              message: 'Screenshot feature requires screen recording permission.',
+              detail: 'Please find this app in "System Settings → Privacy & Security → Screen Recording" and turn on the switch, then try again.',
+              open: 'Open System Settings',
+              cancel: 'Cancel'
+            },
+            ja: {
+              title: '画面収録の許可が必要です',
+              message: 'スクリーンショット機能には画面収録の許可が必要です。',
+              detail: '「システム設定 → プライバシーとセキュリティ → 画面収録」でこのアプリを見つけてスイッチをオンにしてから、もう一度お試しください。',
+              open: 'システム設定を開く',
+              cancel: 'キャンセル'
+            },
+            ko: {
+              title: '화면 녹화 권한 필요',
+              message: '스크린샷 기능을 사용하려면 화면 녹화 권한이 필요합니다.',
+              detail: '"시스템 설정 → 개인 정보 보호 및 보안 → 화면 녹화"에서 이 앱을 찾아 스위치를 켜고 다시 시도해 주세요.',
+              open: '시스템 설정 열기',
+              cancel: '취소'
+            }
+          }
+          const msg = messages[locale] || messages.en
+          const win = BrowserWindow.fromWebContents(_evt.sender)
+          const result = await dialog.showMessageBox(win ?? mainWindow!, {
+            type: 'warning',
+            title: msg.title,
+            message: msg.message,
+            detail: msg.detail,
+            buttons: [msg.open, msg.cancel],
+            defaultId: 0,
+            cancelId: 1
+          })
+          if (result.response === 0) {
+            // 打开 macOS 系统设置的屏幕录制页面
+            shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+          }
+          return null
+        }
+      }
+
+      const picked =
+        sources.find((s) => String((s as unknown as { display_id?: string }).display_id) === primaryId) ??
+        sources.find((s) => s.id.includes(primaryId)) ??
+        sources[0]
+      if (!picked) return null
+      const png = picked.thumbnail.toPNG()
+      if (!png || png.length === 0) return null
+      const ab = png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength)
+      return await saveBufferAsImage({ ...req, data: ab, mime: 'image/png', nameHint: req.nameHint || `screenshot-${tsName()}.png` })
+    } catch {
+      return null
+    }
   })
 
   ipcMain.handle('app:quit', async () => {
@@ -1421,6 +1919,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('settings:update', async (_evt, patch: Partial<AppSettings>) => {
+    const prevLocale = appSettings.locale
     const next = sanitizeSettings(mergeSettings(appSettings, patch))
     appSettings = next
     nativeTheme.themeSource = next.theme
@@ -1430,8 +1929,10 @@ app.whenReady().then(async () => {
       mainWindow.webContents.send('settings:changed', next)
     }
 
-    // locale 变化时需要同步刷新系统菜单中的“版本”文案
-    syncUpdateMenuState()
+    // locale 变化时刷新系统菜单（包含“另存为…”等文案）
+    if (prevLocale !== next.locale) {
+      buildAppMenu(() => mainWindow)
+    }
 
     await writeSettings(next)
     return next
